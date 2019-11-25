@@ -1,0 +1,70 @@
+[
+  {
+    "line": 2,
+    "elements": [
+      {
+        "comments": [
+          {
+            "line": 3,
+            "value": "#shopping basket features"
+          }
+        ],
+        "line": 5,
+        "name": "add to basket",
+        "description": "",
+        "id": "basket;add-to-basket",
+        "type": "scenario",
+        "keyword": "Scenario",
+        "steps": [
+          {
+            "result": {
+              "duration": 4330422133,
+              "status": "passed"
+            },
+            "line": 6,
+            "name": "that i am on the shopping website",
+            "match": {
+              "location": "Basket.that_i_am_on_the_shopping_website()"
+            },
+            "keyword": "Given "
+          },
+          {
+            "result": {
+              "duration": 2973043074,
+              "status": "passed"
+            },
+            "line": 7,
+            "name": "i add an item to the basket",
+            "match": {
+              "location": "Basket.i_add_an_item_to_the_basket()"
+            },
+            "keyword": "When "
+          },
+          {
+            "result": {
+              "duration": 4040701324,
+              "status": "passed"
+            },
+            "line": 8,
+            "name": "i can view the item in my basket",
+            "match": {
+              "location": "Basket.i_can_view_the_item_in_my_basket()"
+            },
+            "keyword": "Then "
+          }
+        ]
+      }
+    ],
+    "name": "basket",
+    "description": "",
+    "id": "basket",
+    "keyword": "Feature",
+    "uri": "basket.feature",
+    "tags": [
+      {
+        "line": 1,
+        "name": "@run"
+      }
+    ]
+  }
+]

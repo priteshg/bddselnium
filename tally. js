@@ -6,42 +6,38 @@ if (fs.existsSync("failure-tally.json")) {
   tally = JSON.parse(fs.readFileSync("failure-tally.json", "utf8"));
 }
 
-function addResult(name, failed) {
-  if (!tally[name]) tally[name] = { runs: 0, fails: 0 };
-  tally[name].runs++;
-  if (failed) tally[name].fails++;
+function addResult(testName, failed) {
+  if (!tally[testName]) tally[testName] = { runs: 0, fails: 0 };
+  tally[testName].runs++;
+  if (failed) tally[testName].fails++;
 }
 
-// --- Read Jest results ---
+// --- JEST (simple key:value format) ---
 if (fs.existsSync("jest-results.json")) {
   const jest = JSON.parse(fs.readFileSync("jest-results.json", "utf8"));
-
-  jest.testResults.forEach(testFile => {
-    testFile.assertionResults.forEach(t => {
-      addResult(t.fullName, t.status === "failed");
-    });
+  Object.entries(jest).forEach(([name, status]) => {
+    addResult(name, status === "failed");
   });
 }
 
-// --- Read Playwright results ---
+// --- PLAYWRIGHT ---
 if (fs.existsSync("playwright-report.json")) {
   const pw = JSON.parse(fs.readFileSync("playwright-report.json", "utf8"));
 
-  function visitSuite(suite) {
+  function walk(suite) {
     suite.specs?.forEach(spec => {
-      const failed = !spec.ok;
-      addResult(spec.title, failed);
+      addResult(spec.title, !spec.ok);
     });
-    suite.suites?.forEach(visitSuite);
+    suite.suites?.forEach(walk);
   }
 
-  pw.suites?.forEach(visitSuite);
+  pw.suites?.forEach(walk);
 }
 
 // Save updated tally
 fs.writeFileSync("failure-tally.json", JSON.stringify(tally, null, 2));
 
-// Create a human-readable file (no console output)
+// Create human-readable file
 let lines = [];
 lines.push("Test Name                              Runs   Fails");
 lines.push("------------------------------------------------------");

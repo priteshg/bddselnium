@@ -1,0 +1,46 @@
+pipeline {
+  agent any
+
+  stages {
+    stage('Checkout') {
+      steps { checkout scm }
+    }
+
+    stage('Restore Previous Tally') {
+      steps {
+        script {
+          copyArtifacts(
+            projectName: env.JOB_NAME,
+            selector: lastSuccessful(),
+            filter: 'failure-tally.json',
+            optional: true
+          )
+        }
+      }
+    }
+
+    stage('Install') {
+      steps { sh 'npm ci' }
+    }
+
+    stage('Run Tests') {
+      steps {
+        sh 'npm run test:jest'          // creates jest-results.json
+        sh 'npm run test:playwright'    // creates playwright-report.json
+      }
+    }
+
+    stage('Generate Tally Report') {
+      steps {
+        sh 'node tally.js'
+        // No console logs — everything goes into tally-report.txt
+      }
+    }
+
+    stage('Archive Results') {
+      steps {
+        archiveArtifacts artifacts: 'failure-tally.json, tally-report.txt', fingerprint: true
+      }
+    }
+  }
+}

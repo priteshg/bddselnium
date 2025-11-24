@@ -12,60 +12,28 @@ function addResult(testName, failed) {
   if (failed) tally[testName].fails++;
 }
 
-/* --------------------------
-   JEST (very basic reporter)
-   -------------------------- */
+/* -----------------------------------
+   JEST — Format B
+   [
+     { "name": "...", "status": "passed" }
+   ]
+------------------------------------- */
 
 if (fs.existsSync("jest-results.json")) {
   const jest = JSON.parse(fs.readFileSync("jest-results.json", "utf8"));
 
   if (Array.isArray(jest)) {
-    // If your Jest reporter produced an array, create synthetic names
-    jest.forEach((status, index) => {
-      const name = `JEST: test-${index + 1}`;
-      addResult(name, status === "failed");
-    });
-  } else {
-    // Normal object map: { "test name": "passed" }
-    Object.entries(jest).forEach(([name, status]) => {
-      addResult(`JEST: ${name}`, status === "failed");
+    jest.forEach(item => {
+      if (item && item.name && item.status) {
+        addResult(`JEST: ${item.name}`, item.status === "failed");
+      }
     });
   }
 }
 
-/* --------------------------
+/* -----------------------------------
    PLAYWRIGHT
-   -------------------------- */
+------------------------------------- */
 
-// Playwright JSON varies - handle suite/spec recursion safely.
 if (fs.existsSync("playwright-report.json")) {
   const pw = JSON.parse(fs.readFileSync("playwright-report.json", "utf8"));
-
-  function walkSuite(suite) {
-    suite.specs?.forEach(spec => {
-      const name = `PW: ${spec.title}`;
-      const failed = !spec.ok;
-      addResult(name, failed);
-    });
-
-    suite.suites?.forEach(walkSuite);
-  }
-
-  pw.suites?.forEach(walkSuite);
-}
-
-/* --------------------------
-   Save files
-   -------------------------- */
-
-fs.writeFileSync("failure-tally.json", JSON.stringify(tally, null, 2));
-
-let lines = [];
-lines.push("Test Name                                       Runs   Fails");
-lines.push("--------------------------------------------------------------");
-
-for (const [name, stats] of Object.entries(tally)) {
-  lines.push(`${name.padEnd(45)} ${String(stats.runs).padEnd(6)} ${stats.fails}`);
-}
-
-fs.writeFileSync("tally-report.txt", lines.join("\n"));

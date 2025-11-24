@@ -12,38 +12,60 @@ function addResult(testName, failed) {
   if (failed) tally[testName].fails++;
 }
 
-// --- JEST (simple key:value format) ---
+/* --------------------------
+   JEST (very basic reporter)
+   -------------------------- */
+
 if (fs.existsSync("jest-results.json")) {
   const jest = JSON.parse(fs.readFileSync("jest-results.json", "utf8"));
-  Object.entries(jest).forEach(([name, status]) => {
-    addResult(name, status === "failed");
-  });
+
+  if (Array.isArray(jest)) {
+    // If your Jest reporter produced an array, create synthetic names
+    jest.forEach((status, index) => {
+      const name = `JEST: test-${index + 1}`;
+      addResult(name, status === "failed");
+    });
+  } else {
+    // Normal object map: { "test name": "passed" }
+    Object.entries(jest).forEach(([name, status]) => {
+      addResult(`JEST: ${name}`, status === "failed");
+    });
+  }
 }
 
-// --- PLAYWRIGHT ---
+/* --------------------------
+   PLAYWRIGHT
+   -------------------------- */
+
+// Playwright JSON varies - handle suite/spec recursion safely.
 if (fs.existsSync("playwright-report.json")) {
   const pw = JSON.parse(fs.readFileSync("playwright-report.json", "utf8"));
 
-  function walk(suite) {
+  function walkSuite(suite) {
     suite.specs?.forEach(spec => {
-      addResult(spec.title, !spec.ok);
+      const name = `PW: ${spec.title}`;
+      const failed = !spec.ok;
+      addResult(name, failed);
     });
-    suite.suites?.forEach(walk);
+
+    suite.suites?.forEach(walkSuite);
   }
 
-  pw.suites?.forEach(walk);
+  pw.suites?.forEach(walkSuite);
 }
 
-// Save updated tally
+/* --------------------------
+   Save files
+   -------------------------- */
+
 fs.writeFileSync("failure-tally.json", JSON.stringify(tally, null, 2));
 
-// Create human-readable file
 let lines = [];
-lines.push("Test Name                              Runs   Fails");
-lines.push("------------------------------------------------------");
+lines.push("Test Name                                       Runs   Fails");
+lines.push("--------------------------------------------------------------");
 
 for (const [name, stats] of Object.entries(tally)) {
-  lines.push(`${name.padEnd(38)} ${String(stats.runs).padEnd(6)} ${stats.fails}`);
+  lines.push(`${name.padEnd(45)} ${String(stats.runs).padEnd(6)} ${stats.fails}`);
 }
 
 fs.writeFileSync("tally-report.txt", lines.join("\n"));

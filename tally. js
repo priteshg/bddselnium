@@ -1,0 +1,53 @@
+const fs = require("fs");
+
+// Load or initialise tally
+let tally = {};
+if (fs.existsSync("failure-tally.json")) {
+  tally = JSON.parse(fs.readFileSync("failure-tally.json", "utf8"));
+}
+
+function addResult(name, failed) {
+  if (!tally[name]) tally[name] = { runs: 0, fails: 0 };
+  tally[name].runs++;
+  if (failed) tally[name].fails++;
+}
+
+// --- Read Jest results ---
+if (fs.existsSync("jest-results.json")) {
+  const jest = JSON.parse(fs.readFileSync("jest-results.json", "utf8"));
+
+  jest.testResults.forEach(testFile => {
+    testFile.assertionResults.forEach(t => {
+      addResult(t.fullName, t.status === "failed");
+    });
+  });
+}
+
+// --- Read Playwright results ---
+if (fs.existsSync("playwright-report.json")) {
+  const pw = JSON.parse(fs.readFileSync("playwright-report.json", "utf8"));
+
+  function visitSuite(suite) {
+    suite.specs?.forEach(spec => {
+      const failed = !spec.ok;
+      addResult(spec.title, failed);
+    });
+    suite.suites?.forEach(visitSuite);
+  }
+
+  pw.suites?.forEach(visitSuite);
+}
+
+// Save updated tally
+fs.writeFileSync("failure-tally.json", JSON.stringify(tally, null, 2));
+
+// Create a human-readable file (no console output)
+let lines = [];
+lines.push("Test Name                              Runs   Fails");
+lines.push("------------------------------------------------------");
+
+for (const [name, stats] of Object.entries(tally)) {
+  lines.push(`${name.padEnd(38)} ${String(stats.runs).padEnd(6)} ${stats.fails}`);
+}
+
+fs.writeFileSync("tally-report.txt", lines.join("\n"));

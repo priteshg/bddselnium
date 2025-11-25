@@ -1,0 +1,32 @@
+const fs = require("fs");
+const path = require("path");
+
+class CustomJestReporter {
+  constructor(globalConfig, options) {
+    this.output = options.output || "jest-results.json";
+    this.results = [];
+  }
+
+  onTestResult(test, testResult) {
+    const testFile = path.relative(process.cwd(), testResult.testFilePath);
+
+    for (let i = 0; i < testResult.testResults.length; i++) {
+      const entry = testResult.testResults[i];
+
+      const data = {
+        file: testFile,                       // which test file
+        fullName: entry.fullName,             // entire hierarchical name
+        name: entry.title,                    // leaf-level test name
+        status: entry.status                  // passed / failed
+      };
+
+      this.results.push(data);
+    }
+  }
+
+  onRunComplete() {
+    fs.writeFileSync(this.output, JSON.stringify(this.results, null, 2));
+  }
+}
+
+module.exports = CustomJestReporter;

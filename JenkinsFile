@@ -2,44 +2,39 @@ pipeline {
   agent any
 
   stages {
-    stage('Checkout') {
-      steps { checkout scm }
-    }
 
-    stage('Restore Previous Tally') {
+    stage('Run Jest Tests') {
       steps {
-        script {
-          copyArtifacts(
-            projectName: env.JOB_NAME,
-            selector: lastSuccessful(),
-            filter: 'failure-tally.json',
-            optional: true
-          )
-        }
+        sh """
+          jest --json --outputFile=jest-results.json || true
+        """
       }
     }
 
-    stage('Install') {
-      steps { sh 'npm ci' }
-    }
-
-    stage('Run Tests') {
+    stage('Run Playwright Tests') {
       steps {
-        sh 'npm run test:jest'          // creates jest-results.json
-        sh 'npm run test:playwright'    // creates playwright-report.json
+        sh """
+          npx playwright test --reporter=json --output=playwright-report.json || true
+        """
       }
     }
 
-    stage('Generate Tally Report') {
+    stage('Update Flake Tally') {
       steps {
-        sh 'node tally.js'
-        // No console logs — everything goes into tally-report.txt
+        sh "node tally.js"
       }
     }
 
-    stage('Archive Results') {
+    stage('Publish Reports') {
       steps {
-        archiveArtifacts artifacts: 'failure-tally.json, tally-report.txt', fingerprint: true
+        archiveArtifacts artifacts: 'tally-report.html', onlyIfSuccessful: false
+
+        publishHTML(target: [
+          reportDir: '.',
+          reportFiles: 'tally-report.html',
+          reportName: 'Flaky Test Report',
+          keepAll: true
+        ])
       }
     }
   }

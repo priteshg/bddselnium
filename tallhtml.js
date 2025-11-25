@@ -1,20 +1,105 @@
-// -------------------------------------
-//   Write HTML Report (sorted)
-// -------------------------------------
+const fs = require("fs");
 
-const sorted = Object.entries(tally)
-  .sort((a, b) => b[1].fails - a[1].fails); // sort by failures desc
+/* ============================================================
+   Helper: load JSON file safely
+   ============================================================ */
+function loadJson(path) {
+  if (!fs.existsSync(path)) return null;
+  try {
+    return JSON.parse(fs.readFileSync(path, "utf8"));
+  } catch {
+    return null;
+  }
+}
 
-const htmlRows = sorted.map(([name, stats]) => `
-  <tr>
-    <td>${name}</td>
-    <td style="text-align:center">${stats.runs}</td>
-    <td style="text-align:center">${stats.fails}</td>
-    <td style="text-align:center">${((stats.fails / stats.runs) * 100).toFixed(1)}%</td>
-  </tr>
-`).join("");
+/* ============================================================
+   Load / Initialise Tally
+   ============================================================ */
+let tally = loadJson("failure-tally.json") || {};
 
-const html = `
+function addResult(name, failed) {
+  if (!tally[name]) tally[name] = { runs: 0, fails: 0 };
+  tally[name].runs++;
+  if (failed) tally[name].fails++;
+}
+
+/* ============================================================
+   Process Jest (Format B)
+   ============================================================ */
+(function processJest() {
+  const data = loadJson("jest-results.json");
+  if (!Array.isArray(data)) return;
+
+  for (let i = 0; i < data.length; i++) {
+    const item = data[i];
+    if (!item || !item.name || !item.status) continue;
+    const failed = item.status === "failed";
+    addResult(`JEST: ${item.name}`, failed);
+  }
+})();
+
+/* ============================================================
+   Process Playwright JSON
+   ============================================================ */
+(function processPlaywright() {
+  const pw = loadJson("playwright-report.json");
+  if (!pw || !pw.suites) return;
+
+  function walkSuite(suite) {
+    if (suite.specs) {
+      for (let i = 0; i < suite.specs.length; i++) {
+        const spec = suite.specs[i];
+        addResult(`PW: ${spec.title}`, !spec.ok);
+      }
+    }
+    if (suite.suites) {
+      for (let i = 0; i < suite.suites.length; i++) {
+        walkSuite(suite.suites[i]);
+      }
+    }
+  }
+
+  for (let i = 0; i < pw.suites.length; i++) {
+    walkSuite(pw.suites[i]);
+  }
+})();
+
+/* ============================================================
+   Save JSON tally
+   ============================================================ */
+fs.writeFileSync("failure-tally.json", JSON.stringify(tally, null, 2));
+
+/* ============================================================
+   HTML Report
+   ============================================================ */
+(function writeHtml() {
+  const entries = Object.entries(tally);
+
+  // Sort by fail count descending
+  for (let i = 0; i < entries.length - 1; i++) {
+    for (let j = i + 1; j < entries.length; j++) {
+      if (entries[j][1].fails > entries[i][1].fails) {
+        const tmp = entries[i];
+        entries[i] = entries[j];
+        entries[j] = tmp;
+      }
+    }
+  }
+
+  let rows = "";
+  for (let i = 0; i < entries.length; i++) {
+    const [name, stats] = entries[i];
+    const pct = ((stats.fails / stats.runs) * 100).toFixed(1);
+    rows += `
+      <tr>
+        <td>${name}</td>
+        <td style="text-align:center">${stats.runs}</td>
+        <td style="text-align:center">${stats.fails}</td>
+        <td style="text-align:center">${pct}%</td>
+      </tr>`;
+  }
+
+  const html = `
 <!DOCTYPE html>
 <html>
 <head>
@@ -40,11 +125,12 @@ const html = `
     <th>Fails</th>
     <th>Flake %</th>
   </tr>
-  ${htmlRows}
+  ${rows}
 </table>
 
 </body>
 </html>
 `;
 
-fs.writeFileSync("tally-report.html", html);
+  fs.writeFileSync("tally-report.html", html);
+})();

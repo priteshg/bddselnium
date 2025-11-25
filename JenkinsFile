@@ -1,41 +1,77 @@
 pipeline {
-  agent any
+    agent any
 
-  stages {
-
-    stage('Run Jest Tests') {
-      steps {
-        sh """
-          jest --json --outputFile=jest-results.json || true
-        """
-      }
+    options {
+        timestamps()
+        disableConcurrentBuilds()
     }
 
-    stage('Run Playwright Tests') {
-      steps {
-        sh """
-          npx playwright test --reporter=json --output=playwright-report.json || true
-        """
-      }
+    environment {
+        NODE_ENV = "ci"
     }
 
-    stage('Update Flake Tally') {
-      steps {
-        sh "node tally.js"
-      }
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                sh 'npm ci'
+            }
+        }
+
+        stage('Run Tests') {
+            steps {
+                sh 'npm run test'
+            }
+            post {
+                always {
+                    sh 'echo "Tests completed. Preparing reports..."'
+                }
+            }
+        }
     }
 
-    stage('Publish Reports') {
-      steps {
-        archiveArtifacts artifacts: 'tally-report.html', onlyIfSuccessful: false
+    post {
+        always {
+            script {
 
-        publishHTML(target: [
-          reportDir: '.',
-          reportFiles: 'tally-report.html',
-          reportName: 'Flaky Test Report',
-          keepAll: true
-        ])
-      }
+                // ★ Run both publishers in parallel
+                parallel(
+                    publishHtmlReport: {
+                        publishHTML target: [
+                            allowMissing: true,
+                            alwaysLinkToLastBuild: true,
+                            keepAll: true,
+                            reportDir: 'reports/html',
+                            reportFiles: 'index.html',
+                            reportName: 'Project Test Reports'
+                        ]
+                    },
+                    publishPlaywrightReport: {
+                        publishHTML target: [
+                            allowMissing: true,
+                            alwaysLinkToLastBuild: true,
+                            keepAll: true,
+                            reportDir: 'test-results/playwright-report',
+                            reportFiles: 'index.html',
+                            reportName: 'Playwright Test Report'
+                        ]
+                    }
+                )
+            }
+        }
+
+        // Optional: show test exit status
+        success {
+            echo "Build succeeded"
+        }
+        failure {
+            echo "Build failed — review test output and reports"
+        }
     }
-  }
 }

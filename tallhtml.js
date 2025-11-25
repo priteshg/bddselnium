@@ -1,7 +1,7 @@
 const fs = require("fs");
 
 /* ============================================================
-   Helper: load JSON file safely
+   Helper: load JSON
    ============================================================ */
 function loadJson(path) {
   if (!fs.existsSync(path)) return null;
@@ -13,9 +13,9 @@ function loadJson(path) {
 }
 
 /* ============================================================
-   Load / Initialise Tally
+   Load or create tally
    ============================================================ */
-let tally = loadJson("failure-tally.json") || {};
+let tally = loadJson("test-results/failure-tally.json") || {};
 
 function addResult(name, failed) {
   if (!tally[name]) tally[name] = { runs: 0, fails: 0 };
@@ -24,7 +24,7 @@ function addResult(name, failed) {
 }
 
 /* ============================================================
-   Process Jest (Format B)
+   JEST: Format B [{ name, status }]
    ============================================================ */
 (function processJest() {
   const data = loadJson("jest-results.json");
@@ -33,16 +33,15 @@ function addResult(name, failed) {
   for (let i = 0; i < data.length; i++) {
     const item = data[i];
     if (!item || !item.name || !item.status) continue;
-    const failed = item.status === "failed";
-    addResult(`JEST: ${item.name}`, failed);
+    addResult(`JEST: ${item.name}`, item.status === "failed");
   }
 })();
 
 /* ============================================================
-   Process Playwright JSON
+   Playwright: stored in test-results/playwright-report.json
    ============================================================ */
 (function processPlaywright() {
-  const pw = loadJson("playwright-report.json");
+  const pw = loadJson("test-results/playwright-report.json");
   if (!pw || !pw.suites) return;
 
   function walkSuite(suite) {
@@ -65,72 +64,95 @@ function addResult(name, failed) {
 })();
 
 /* ============================================================
-   Save JSON tally
+   Save updated tally JSON
    ============================================================ */
-fs.writeFileSync("failure-tally.json", JSON.stringify(tally, null, 2));
+fs.writeFileSync("test-results/failure-tally.json", JSON.stringify(tally, null, 2));
 
 /* ============================================================
-   HTML Report
+   Build two tables: Playwright (left) + Jest (right)
    ============================================================ */
-(function writeHtml() {
-  const entries = Object.entries(tally);
 
-  // Sort by fail count descending
-  for (let i = 0; i < entries.length - 1; i++) {
-    for (let j = i + 1; j < entries.length; j++) {
-      if (entries[j][1].fails > entries[i][1].fails) {
-        const tmp = entries[i];
-        entries[i] = entries[j];
-        entries[j] = tmp;
-      }
-    }
-  }
+// Separate entries
+let jestRows = [];
+let pwRows = [];
 
-  let rows = "";
-  for (let i = 0; i < entries.length; i++) {
-    const [name, stats] = entries[i];
-    const pct = ((stats.fails / stats.runs) * 100).toFixed(1);
-    rows += `
+for (const [name, stats] of Object.entries(tally)) {
+  const pct = ((stats.fails / stats.runs) * 100).toFixed(1);
+  const rowHtml = `
       <tr>
         <td>${name}</td>
         <td style="text-align:center">${stats.runs}</td>
         <td style="text-align:center">${stats.fails}</td>
         <td style="text-align:center">${pct}%</td>
       </tr>`;
-  }
 
-  const html = `
+  if (name.startsWith("JEST:")) jestRows.push(rowHtml);
+  else if (name.startsWith("PW:")) pwRows.push(rowHtml);
+}
+
+// Optional: sort inside each table by fail count desc
+jestRows = jestRows.sort((a, b) => {
+  const failsA = Number(a.match(/<td.*?>(\d+)<\/td>/g)[1].replace(/<[^>]+>/g,''));
+  const failsB = Number(b.match(/<td.*?>(\d+)<\/td>/g)[1].replace(/<[^>]+>/g,''));
+  return failsB - failsA;
+});
+
+pwRows = pwRows.sort((a, b) => {
+  const failsA = Number(a.match(/<td.*?>(\d+)<\/td>/g)[1].replace(/<[^>]+>/g,''));
+  const failsB = Number(b.match(/<td.*?>(\d+)<\/td>/g)[1].replace(/<[^>]+>/g,''));
+  return failsB - failsA;
+});
+
+/* ============================================================
+   HTML: Two side-by-side tables
+   ============================================================ */
+
+const html = `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8"/>
   <title>Flaky Test Tally</title>
   <style>
-    body { font-family: Arial, sans-serif; padding: 20px; }
-    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+    body { font-family: Arial, sans-serif; padding: 20px; display: flex; gap: 40px; }
+    .column { width: 50%; }
+    table { border-collapse: collapse; width: 100%; }
     th, td { border: 1px solid #ccc; padding: 8px; }
     th { background: #eee; }
     tr:nth-child(even) { background: #f9f9f9; }
+    h2 { text-align: center; }
   </style>
 </head>
 <body>
 
-<h2>Flaky Test Tally</h2>
-<p>Sorted by failing count (highest first)</p>
+<div class="column">
+  <h2>Playwright Failures</h2>
+  <table>
+    <tr>
+      <th>Test Name</th>
+      <th>Runs</th>
+      <th>Fails</th>
+      <th>Flake %</th>
+    </tr>
+    ${pwRows.join("\n")}
+  </table>
+</div>
 
-<table>
-  <tr>
-    <th>Test Name</th>
-    <th>Runs</th>
-    <th>Fails</th>
-    <th>Flake %</th>
-  </tr>
-  ${rows}
-</table>
+<div class="column">
+  <h2>Jest Failures</h2>
+  <table>
+    <tr>
+      <th>Test Name</th>
+      <th>Runs</th>
+      <th>Fails</th>
+      <th>Flake %</th>
+    </tr>
+    ${jestRows.join("\n")}
+  </table>
+</div>
 
 </body>
 </html>
 `;
 
-  fs.writeFileSync("tally-report.html", html);
-})();
+fs.writeFileSync("test-results/failure-tally.html", html);

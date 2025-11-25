@@ -1,20 +1,27 @@
 pipeline {
     agent any
 
-    options {
-        timestamps()
-        disableConcurrentBuilds()
-    }
-
-    environment {
-        NODE_ENV = "ci"
+    parameters {
+        booleanParam(
+            name: 'RESET_TALLY',
+            defaultValue: false,
+            description: 'Tick to clear previous failure-tally.json'
+        )
     }
 
     stages {
 
-        stage('Checkout') {
+        stage('Restore Previous Tally') {
+            when {
+                expression { return !params.RESET_TALLY }
+            }
             steps {
-                checkout scm
+                copyArtifacts(
+                    projectName: env.JOB_NAME,
+                    selector: lastSuccessful(),
+                    filter: 'test-results/failure-tally.json',
+                    optional: true
+                )
             }
         }
 
@@ -24,54 +31,36 @@ pipeline {
             }
         }
 
-        stage('Run Tests') {
+        stage('Run Jest Tests') {
             steps {
-                sh 'npm run test'
+                sh 'npm run test:jest || true'
             }
-            post {
-                always {
-                    sh 'echo "Tests completed. Preparing reports..."'
-                }
+        }
+
+        stage('Run Playwright Tests') {
+            steps {
+                sh 'npm run test:playwright || true'
+            }
+        }
+
+        stage('Generate Tally') {
+            steps {
+                sh 'node tally.js'
             }
         }
     }
 
     post {
         always {
-            script {
-
-                // ★ Run both publishers in parallel
-                parallel(
-                    publishHtmlReport: {
-                        publishHTML target: [
-                            allowMissing: true,
-                            alwaysLinkToLastBuild: true,
-                            keepAll: true,
-                            reportDir: 'reports/html',
-                            reportFiles: 'index.html',
-                            reportName: 'Project Test Reports'
-                        ]
-                    },
-                    publishPlaywrightReport: {
-                        publishHTML target: [
-                            allowMissing: true,
-                            alwaysLinkToLastBuild: true,
-                            keepAll: true,
-                            reportDir: 'test-results/playwright-report',
-                            reportFiles: 'index.html',
-                            reportName: 'Playwright Test Report'
-                        ]
-                    }
-                )
-            }
-        }
-
-        // Optional: show test exit status
-        success {
-            echo "Build succeeded"
-        }
-        failure {
-            echo "Build failed — review test output and reports"
+            archiveArtifacts artifacts: 'test-results/failure-tally.json', allowEmptyArchive: true
+            publishHTML target: [
+                allowMissing: true,
+                alwaysLinkToLastBuild: true,
+                keepAll: true,
+                reportDir: 'test-results',
+                reportFiles: 'failure-tally.html',
+                reportName: 'Failure Tally'
+            ]
         }
     }
 }

@@ -5,24 +5,25 @@ class CustomJestReporter {
   constructor(globalConfig, options) {
     this.output = options.output || "jest-results.json";
     this.results = [];
+    this.testCounters = {}; // file → index
   }
 
   onTestResult(test, testResult) {
     const file = path.relative(process.cwd(), testResult.testFilePath);
 
+    if (!this.testCounters[file]) {
+      this.testCounters[file] = 1;
+    }
+
     for (let i = 0; i < testResult.testResults.length; i++) {
-      const entry = testResult.testResults[i];
+      const testIndex = this.testCounters[file]++;
 
-      // Stable describe path (no params)
-      const describePath = entry.ancestorTitles.join(" > ");
+      // Stable unique ID for this test
+      const id = `${file}::test-${String(testIndex).padStart(3, "0")}`;
 
-      // Stable ID = file + describe + title
-      const id = `${file}::${describePath}::${entry.title}`;
-
-      // Only the id + status
       this.results.push({
         id,
-        status: entry.status
+        status: testResult.testResults[i].status
       });
     }
   }

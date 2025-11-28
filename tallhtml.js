@@ -1,56 +1,69 @@
 const fs = require("fs");
+const path = require("path");
 
-/* ============================================================
-   Helper: load JSON
-   ============================================================ */
-function loadJson(path) {
-  if (!fs.existsSync(path)) return null;
+// ----------------------------------------------
+// Command-line arg: --refresh=true / --refresh
+// ----------------------------------------------
+const args = process.argv.slice(2);
+const refresh = args.includes("--refresh") || args.includes("--refresh=true");
+
+const RESULTS_DIR = "test-results";
+const TALLY_FILE = path.join(RESULTS_DIR, "failure-tally.json");
+
+fs.mkdirSync(RESULTS_DIR, { recursive: true });
+
+// ----------------------------------------------
+// Load or initialise tally
+// ----------------------------------------------
+let tally = {};
+
+if (!refresh && fs.existsSync(TALLY_FILE)) {
   try {
-    return JSON.parse(fs.readFileSync(path, "utf8"));
+    tally = JSON.parse(fs.readFileSync(TALLY_FILE, "utf8"));
   } catch {
-    return null;
+    tally = {};
   }
 }
 
-/* ============================================================
-   Load or create tally
-   ============================================================ */
-let tally = loadJson("test-results/failure-tally.json") || {};
-
-function addResult(name, failed) {
-  if (!tally[name]) tally[name] = { runs: 0, fails: 0 };
-  tally[name].runs++;
-  if (failed) tally[name].fails++;
+// ----------------------------------------------
+// Helper: Add test result
+// ----------------------------------------------
+function addResult(id, failed) {
+  if (!tally[id]) tally[id] = { runs: 0, fails: 0 };
+  tally[id].runs++;
+  if (failed) tally[id].fails++;
 }
 
-/* ============================================================
-   JEST: Format B [{ name, status }]
-   ============================================================ */
-(function processJest() {
-  const data = loadJson("jest-results.json");
-  if (!Array.isArray(data)) return;
+// ----------------------------------------------
+// Load Jest results
+// ----------------------------------------------
+const jestResultsPath = "jest-results.json";
+if (fs.existsSync(jestResultsPath)) {
+  const jest = JSON.parse(fs.readFileSync(jestResultsPath, "utf8"));
 
-  for (let i = 0; i < data.length; i++) {
-    const item = data[i];
-    if (!item || !item.name || !item.status) continue;
-    addResult(`JEST: ${item.name}`, item.status === "failed");
+  for (let i = 0; i < jest.length; i++) {
+    const item = jest[i];
+    const id = `JEST:${item.id}`;
+    addResult(id, item.status === "failed");
   }
-})();
+}
 
-/* ============================================================
-   Playwright: stored in test-results/playwright-report.json
-   ============================================================ */
-(function processPlaywright() {
-  const pw = loadJson("test-results/playwright-report.json");
-  if (!pw || !pw.suites) return;
+// ----------------------------------------------
+// Load Playwright results
+// ----------------------------------------------
+const pwPath = "test-results/playwright-report.json";
+if (fs.existsSync(pwPath)) {
+  const pw = JSON.parse(fs.readFileSync(pwPath, "utf8"));
 
   function walkSuite(suite) {
     if (suite.specs) {
       for (let i = 0; i < suite.specs.length; i++) {
         const spec = suite.specs[i];
-        addResult(`PW: ${spec.title}`, !spec.ok);
+        const id = `PW:${spec.title}`;
+        addResult(id, !spec.ok);
       }
     }
+
     if (suite.suites) {
       for (let i = 0; i < suite.suites.length; i++) {
         walkSuite(suite.suites[i]);
@@ -58,101 +71,16 @@ function addResult(name, failed) {
     }
   }
 
-  for (let i = 0; i < pw.suites.length; i++) {
-    walkSuite(pw.suites[i]);
+  if (Array.isArray(pw.suites)) {
+    for (let i = 0; i < pw.suites.length; i++) {
+      walkSuite(pw.suites[i]);
+    }
   }
-})();
-
-/* ============================================================
-   Save updated tally JSON
-   ============================================================ */
-fs.writeFileSync("test-results/failure-tally.json", JSON.stringify(tally, null, 2));
-
-/* ============================================================
-   Build two tables: Playwright (left) + Jest (right)
-   ============================================================ */
-
-// Separate entries
-let jestRows = [];
-let pwRows = [];
-
-for (const [name, stats] of Object.entries(tally)) {
-  const pct = ((stats.fails / stats.runs) * 100).toFixed(1);
-  const rowHtml = `
-      <tr>
-        <td>${name}</td>
-        <td style="text-align:center">${stats.runs}</td>
-        <td style="text-align:center">${stats.fails}</td>
-        <td style="text-align:center">${pct}%</td>
-      </tr>`;
-
-  if (name.startsWith("JEST:")) jestRows.push(rowHtml);
-  else if (name.startsWith("PW:")) pwRows.push(rowHtml);
 }
 
-// Optional: sort inside each table by fail count desc
-jestRows = jestRows.sort((a, b) => {
-  const failsA = Number(a.match(/<td.*?>(\d+)<\/td>/g)[1].replace(/<[^>]+>/g,''));
-  const failsB = Number(b.match(/<td.*?>(\d+)<\/td>/g)[1].replace(/<[^>]+>/g,''));
-  return failsB - failsA;
-});
+// ----------------------------------------------
+// Save updated tally
+// ----------------------------------------------
+fs.writeFileSync(TALLY_FILE, JSON.stringify(tally, null, 2));
 
-pwRows = pwRows.sort((a, b) => {
-  const failsA = Number(a.match(/<td.*?>(\d+)<\/td>/g)[1].replace(/<[^>]+>/g,''));
-  const failsB = Number(b.match(/<td.*?>(\d+)<\/td>/g)[1].replace(/<[^>]+>/g,''));
-  return failsB - failsA;
-});
-
-/* ============================================================
-   HTML: Two side-by-side tables
-   ============================================================ */
-
-const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8"/>
-  <title>Flaky Test Tally</title>
-  <style>
-    body { font-family: Arial, sans-serif; padding: 20px; display: flex; gap: 40px; }
-    .column { width: 50%; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { border: 1px solid #ccc; padding: 8px; }
-    th { background: #eee; }
-    tr:nth-child(even) { background: #f9f9f9; }
-    h2 { text-align: center; }
-  </style>
-</head>
-<body>
-
-<div class="column">
-  <h2>Playwright Failures</h2>
-  <table>
-    <tr>
-      <th>Test Name</th>
-      <th>Runs</th>
-      <th>Fails</th>
-      <th>Flake %</th>
-    </tr>
-    ${pwRows.join("\n")}
-  </table>
-</div>
-
-<div class="column">
-  <h2>Jest Failures</h2>
-  <table>
-    <tr>
-      <th>Test Name</th>
-      <th>Runs</th>
-      <th>Fails</th>
-      <th>Flake %</th>
-    </tr>
-    ${jestRows.join("\n")}
-  </table>
-</div>
-
-</body>
-</html>
-`;
-
-fs.writeFileSync("test-results/failure-tally.html", html);
+console.log(`Tally updated. Refresh = ${refresh}`);

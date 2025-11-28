@@ -1,0 +1,35 @@
+const fs = require("fs");
+const path = require("path");
+
+class CustomJestReporter {
+  constructor(globalConfig, options) {
+    this.output = options.output || "jest-results.json";
+    this.results = [];
+  }
+
+  onTestResult(test, testResult) {
+    const file = path.relative(process.cwd(), testResult.testFilePath);
+
+    for (let i = 0; i < testResult.testResults.length; i++) {
+      const entry = testResult.testResults[i];
+
+      // Stable describe path (no params)
+      const describePath = entry.ancestorTitles.join(" > ");
+
+      // Stable ID = file + describe + title
+      const id = `${file}::${describePath}::${entry.title}`;
+
+      // Only the id + status
+      this.results.push({
+        id,
+        status: entry.status
+      });
+    }
+  }
+
+  onRunComplete() {
+    fs.writeFileSync(this.output, JSON.stringify(this.results, null, 2));
+  }
+}
+
+module.exports = CustomJestReporter;

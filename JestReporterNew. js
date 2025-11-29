@@ -5,7 +5,24 @@ class CustomJestReporter {
   constructor(globalConfig, options) {
     this.output = options.output || "jest-results.json";
     this.results = [];
-    this.testCounters = {}; // file → index
+    this.testCounters = {};
+  }
+
+  // Strip params without regex
+  cleanName(title) {
+    if (!title) return "";
+
+    const cutChars = ["{", "[", "(", "=", ":"];
+    let minIndex = title.length;
+
+    for (const ch of cutChars) {
+      const idx = title.indexOf(ch);
+      if (idx !== -1 && idx < minIndex) {
+        minIndex = idx;
+      }
+    }
+
+    return title.substring(0, minIndex).trim();
   }
 
   onTestResult(test, testResult) {
@@ -16,14 +33,19 @@ class CustomJestReporter {
     }
 
     for (let i = 0; i < testResult.testResults.length; i++) {
+      const entry = testResult.testResults[i];
       const testIndex = this.testCounters[file]++;
 
-      // Stable unique ID for this test
+      // STABLE UNIQUE ID
       const id = `${file}::test-${String(testIndex).padStart(3, "0")}`;
+
+      // CLEAN HUMAN TITLE
+      const cleanTitle = this.cleanName(entry.title);
 
       this.results.push({
         id,
-        status: testResult.testResults[i].status
+        name: cleanTitle,
+        status: entry.status
       });
     }
   }

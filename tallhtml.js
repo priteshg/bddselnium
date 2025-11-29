@@ -2,18 +2,19 @@ const fs = require("fs");
 const path = require("path");
 
 // ----------------------------------------------
-// Command-line arg: --refresh=true / --refresh
+// Command-line: allow --refresh
 // ----------------------------------------------
 const args = process.argv.slice(2);
-const refresh = args.includes("--refresh") || args.includes("--refresh=true");
+const refresh = args.includes("--refresh");
 
-const RESULTS_DIR = "test-results";
-const TALLY_FILE = path.join(RESULTS_DIR, "failure-tally.json");
+// Tally file now saved in ROOT
+const TALLY_FILE = path.join(process.cwd(), "failure-tally.json");
 
-fs.mkdirSync(RESULTS_DIR, { recursive: true });
+// Create test-results folder if needed (Playwright lives there)
+fs.mkdirSync("test-results", { recursive: true });
 
 // ----------------------------------------------
-// Load or initialise tally
+// Load or initialize tally
 // ----------------------------------------------
 let tally = {};
 
@@ -26,32 +27,45 @@ if (!refresh && fs.existsSync(TALLY_FILE)) {
 }
 
 // ----------------------------------------------
-// Helper: Add test result
+// Add a test result
 // ----------------------------------------------
-function addResult(id, failed) {
-  if (!tally[id]) tally[id] = { runs: 0, fails: 0 };
+function addResult(id, name, failed) {
+  if (!tally[id]) {
+    tally[id] = {
+      name,
+      runs: 0,
+      fails: 0,
+      status: "unknown"
+    };
+  }
+
   tally[id].runs++;
   if (failed) tally[id].fails++;
+  tally[id].status = failed ? "failed" : "passed";
 }
 
-// ----------------------------------------------
-// Load Jest results
-// ----------------------------------------------
-const jestResultsPath = "jest-results.json";
-if (fs.existsSync(jestResultsPath)) {
-  const jest = JSON.parse(fs.readFileSync(jestResultsPath, "utf8"));
+// ------------------------------------------------
+// Load JEST results: { id, name, status }
+// ------------------------------------------------
+const jestPath = "jest-results.json";
 
-  for (let i = 0; i < jest.length; i++) {
-    const item = jest[i];
+if (fs.existsSync(jestPath)) {
+  const jestData = JSON.parse(fs.readFileSync(jestPath, "utf8"));
+
+  for (let i = 0; i < jestData.length; i++) {
+    const item = jestData[i];
     const id = `JEST:${item.id}`;
-    addResult(id, item.status === "failed");
+    const name = item.name;
+    const failed = item.status === "failed";
+    addResult(id, name, failed);
   }
 }
 
-// ----------------------------------------------
-// Load Playwright results
-// ----------------------------------------------
+// ------------------------------------------------
+// Load PLAYWRIGHT results
+// ------------------------------------------------
 const pwPath = "test-results/playwright-report.json";
+
 if (fs.existsSync(pwPath)) {
   const pw = JSON.parse(fs.readFileSync(pwPath, "utf8"));
 
@@ -59,8 +73,12 @@ if (fs.existsSync(pwPath)) {
     if (suite.specs) {
       for (let i = 0; i < suite.specs.length; i++) {
         const spec = suite.specs[i];
-        const id = `PW:${spec.title}`;
-        addResult(id, !spec.ok);
+
+        const id = `PW:${spec.location.file}::${spec.title}`;
+        const name = spec.title;
+        const failed = !spec.ok;
+
+        addResult(id, name, failed);
       }
     }
 
@@ -71,16 +89,14 @@ if (fs.existsSync(pwPath)) {
     }
   }
 
-  if (Array.isArray(pw.suites)) {
-    for (let i = 0; i < pw.suites.length; i++) {
-      walkSuite(pw.suites[i]);
-    }
+  for (let i = 0; i < pw.suites.length; i++) {
+    walkSuite(pw.suites[i]);
   }
 }
 
-// ----------------------------------------------
-// Save updated tally
-// ----------------------------------------------
+// ------------------------------------------------
+// Write final tally to ROOT
+// ------------------------------------------------
 fs.writeFileSync(TALLY_FILE, JSON.stringify(tally, null, 2));
 
 console.log(`Tally updated. Refresh = ${refresh}`);

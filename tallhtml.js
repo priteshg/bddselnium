@@ -1,51 +1,141 @@
-function colorForPct(pct) {
-  const p = parseFloat(pct);
+const fs = require("fs");
+const path = require("path");
 
-  if (p === 0) return "#d8f5d0";       // light green
-  if (p < 20) return "#f7fdd0";        // green-yellow
-  if (p < 40) return "#fff4b8";        // yellow
-  return "#f8d0d0";                    // red
+// Command line handling
+const args = process.argv.slice(2);
+const refresh = args.includes("--refresh");
+
+// File paths
+const ROOT = process.cwd();
+const TALLY_JSON = path.join(ROOT, "failure-tally.json");
+const TALLY_HTML = path.join(ROOT, "failure-tally.html");
+const PW_JSON = path.join(ROOT, "test-results", "playwright-report.json");
+const JEST_JSON = path.join(ROOT, "jest-results.json");
+
+// Ensure PW folder exists
+fs.mkdirSync(path.join(ROOT, "test-results"), { recursive: true });
+
+// Load existing tally unless we are refreshing
+let tally = {};
+
+if (!refresh && fs.existsSync(TALLY_JSON)) {
+  try {
+    tally = JSON.parse(fs.readFileSync(TALLY_JSON, "utf8"));
+  } catch {
+    tally = {};
+  }
 }
 
-// Build coloured table rows
-function buildRow(id, stats) {
-  const flakePct = stats.runs > 0 ? ((stats.fails / stats.runs) * 100).toFixed(1) : "0.0";
-  const bg = colorForPct(flakePct);
+// Update tally for an individual test
+function updateTally(id, name, failed) {
+  if (!tally[id]) {
+    tally[id] = { name, runs: 0, fails: 0, status: "unknown" };
+  }
+
+  tally[id].runs += 1;
+  if (failed) {
+    tally[id].fails += 1;
+    tally[id].status = "failed";
+  } else {
+    tally[id].status = "passed";
+  }
+}
+
+// -----------------------------
+// Process Jest results
+// -----------------------------
+if (fs.existsSync(JEST_JSON)) {
+  const jestData = JSON.parse(fs.readFileSync(JEST_JSON, "utf8"));
+
+  for (let i = 0; i < jestData.length; i++) {
+    const item = jestData[i];
+    const id = `JEST:${item.id}`;
+    const name = item.name;
+    const failed = item.status === "failed";
+    updateTally(id, name, failed);
+  }
+}
+
+// -----------------------------
+// Process Playwright results
+// -----------------------------
+if (fs.existsSync(PW_JSON)) {
+  const pw = JSON.parse(fs.readFileSync(PW_JSON, "utf8"));
+
+  function walkSuite(suite) {
+    if (suite.specs) {
+      for (let i = 0; i < suite.specs.length; i++) {
+        const spec = suite.specs[i];
+        const file = spec.location?.file || "unknown";
+        const id = `PW:${file}::${spec.title}`;
+        updateTally(id, spec.title, !spec.ok);
+      }
+    }
+
+    if (suite.suites) {
+      for (let i = 0; i < suite.suites.length; i++) {
+        walkSuite(suite.suites[i]);
+      }
+    }
+  }
+
+  if (Array.isArray(pw.suites)) {
+    for (let i = 0; i < pw.suites.length; i++) {
+      walkSuite(pw.suites[i]);
+    }
+  }
+}
+
+// Save updated JSON
+fs.writeFileSync(TALLY_JSON, JSON.stringify(tally, null, 2));
+
+// -----------------------------
+// Build HTML report
+// -----------------------------
+
+function flakeColor(flakePct) {
+  const p = parseFloat(flakePct);
+
+  if (p === 0) return "#d8f5d0";      // light green
+  if (p < 20) return "#f7fdd0";       // green-yellow
+  if (p < 40) return "#fff4b8";       // yellow
+  return "#f8d0d0";                   // red
+}
+
+function buildRow(idx, id, stats) {
+  const pct = stats.runs > 0 ? ((stats.fails / stats.runs) * 100).toFixed(1) : "0.0";
+  const bg = flakeColor(pct);
 
   return `
     <tr style="background:${bg}">
+      <td style="text-align:center">${idx}</td>
       <td>${id}</td>
       <td>${stats.name}</td>
       <td style="text-align:center">${stats.runs}</td>
       <td style="text-align:center">${stats.fails}</td>
-      <td style="text-align:center">${flakePct}%</td>
+      <td style="text-align:center">${pct}%</td>
       <td style="text-align:center">${stats.status}</td>
     </tr>
   `;
 }
 
-// Split into Jest & PW buckets
-const jestRows = [];
 const pwRows = [];
+const jestRows = [];
 
 for (const [id, stats] of Object.entries(tally)) {
-  const row = buildRow(id, stats);
-
   if (id.startsWith("PW:")) {
-    pwRows.push({ fails: stats.fails, row });
+    pwRows.push({ id, stats });
   } else {
-    jestRows.push({ fails: stats.fails, row });
+    jestRows.push({ id, stats });
   }
 }
 
-// Sort by fails DESC
-pwRows.sort((a, b) => b.fails - a.fails);
-jestRows.sort((a, b) => b.fails - a.fails);
+pwRows.sort((a, b) => b.stats.fails - a.stats.fails);
+jestRows.sort((a, b) => b.stats.fails - a.stats.fails);
 
-const pwTableRows = pwRows.map(x => x.row).join("\n");
-const jestTableRows = jestRows.map(x => x.row).join("\n");
+const pwHtml = pwRows.map((row, i) => buildRow(i + 1, row.id, row.stats)).join("\n");
+const jestHtml = jestRows.map((row, i) => buildRow(i + 1, row.id, row.stats)).join("\n");
 
-// FINAL HTML
 const html = `
 <!DOCTYPE html>
 <html>
@@ -58,7 +148,7 @@ const html = `
     table { border-collapse: collapse; width: 100%; font-size: 13px; }
     th, td { border: 1px solid #ccc; padding: 6px 8px; }
     th { background: #eee; text-align: center; }
-    h2 { margin-top: 0; text-align: center; }
+    h2 { text-align: center; margin-top: 0; }
   </style>
 </head>
 <body>
@@ -67,6 +157,7 @@ const html = `
   <h2>Playwright Tests</h2>
   <table>
     <tr>
+      <th>#</th>
       <th>ID</th>
       <th>Name</th>
       <th>Runs</th>
@@ -74,7 +165,7 @@ const html = `
       <th>Flake %</th>
       <th>Status</th>
     </tr>
-    ${pwTableRows || "<tr><td colspan='6' style='text-align:center'>No Playwright tests</td></tr>"}
+    ${pwHtml || "<tr><td colspan='7' style='text-align:center'>No Playwright tests</td></tr>"}
   </table>
 </div>
 
@@ -82,6 +173,7 @@ const html = `
   <h2>Jest Tests</h2>
   <table>
     <tr>
+      <th>#</th>
       <th>ID</th>
       <th>Name</th>
       <th>Runs</th>
@@ -89,7 +181,7 @@ const html = `
       <th>Flake %</th>
       <th>Status</th>
     </tr>
-    ${jestTableRows || "<tr><td colspan='6' style='text-align:center'>No Jest tests</td></tr>"}
+    ${jestHtml || "<tr><td colspan='7' style='text-align:center'>No Jest tests</td></tr>"}
   </table>
 </div>
 
@@ -98,4 +190,5 @@ const html = `
 `;
 
 fs.writeFileSync(TALLY_HTML, html);
-console.log(`Wrote HTML to ${TALLY_HTML}`);
+
+console.log(`Updated tally.json and tally.html (refresh=${refresh})`);

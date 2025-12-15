@@ -14,7 +14,7 @@
       display: flex;
       gap: 24px;
       padding: 12px 16px;
-      margin-bottom: 16px;
+      margin-bottom: 20px;
       background: #f7f9fb;
       border: 1px solid #ddd;
       font-size: 14px;
@@ -28,6 +28,15 @@
       margin: 0 0 8px 0;
       font-size: 14px;
       font-weight: 600;
+    }
+
+    .legend {
+      font-size: 12px;
+      margin-bottom: 6px;
+    }
+
+    .legend span {
+      margin-right: 16px;
     }
 
     .tables {
@@ -79,34 +88,57 @@
   <div class="summary">
     <div><strong>Total tests:</strong> 312</div>
     <div><strong>Flaky tests:</strong> 18</div>
-    <div><strong>&ge; 40% flake:</strong> 4</div>
+    <div><strong>Jest flakes:</strong> 6</div>
+    <div><strong>Playwright flakes:</strong> 12</div>
     <div><strong>Last run:</strong> 2h ago</div>
   </div>
 
-  <!-- TREND CHART -->
+  <!-- TREND -->
   <div class="chart">
-    <h3>Flaky test trend (last runs)</h3>
+    <h3>Flaky tests per run</h3>
 
-    <svg width="100%" height="120" viewBox="0 0 600 120">
+    <div class="legend">
+      <span style="color:#1f77b4;">● Jest</span>
+      <span style="color:#e5533d;">● Playwright</span>
+    </div>
+
+    <svg width="100%" height="130" viewBox="0 0 600 130">
       <!-- baseline -->
-      <line x1="40" y1="100" x2="580" y2="100" stroke="#ccc" />
+      <line x1="40" y1="110" x2="580" y2="110" stroke="#ccc" />
 
-      <!-- trend line -->
+      <!-- Playwright line -->
       <polyline
         fill="none"
         stroke="#e5533d"
         stroke-width="2"
-        points="40,88 120,80 200,76 280,70 360,72 440,68 520,64"
+        points="40,90 120,84 200,78 280,70 360,74 440,68 520,64"
       />
 
-      <!-- dots -->
-      <circle cx="40" cy="88" r="3" fill="#e5533d" />
-      <circle cx="120" cy="80" r="3" fill="#e5533d" />
-      <circle cx="200" cy="76" r="3" fill="#e5533d" />
+      <!-- Jest line -->
+      <polyline
+        fill="none"
+        stroke="#1f77b4"
+        stroke-width="2"
+        points="40,104 120,100 200,98 280,96 360,98 440,94 520,92"
+      />
+
+      <!-- Playwright dots -->
+      <circle cx="40" cy="90" r="3" fill="#e5533d" />
+      <circle cx="120" cy="84" r="3" fill="#e5533d" />
+      <circle cx="200" cy="78" r="3" fill="#e5533d" />
       <circle cx="280" cy="70" r="3" fill="#e5533d" />
-      <circle cx="360" cy="72" r="3" fill="#e5533d" />
+      <circle cx="360" cy="74" r="3" fill="#e5533d" />
       <circle cx="440" cy="68" r="3" fill="#e5533d" />
       <circle cx="520" cy="64" r="3" fill="#e5533d" />
+
+      <!-- Jest dots -->
+      <circle cx="40" cy="104" r="3" fill="#1f77b4" />
+      <circle cx="120" cy="100" r="3" fill="#1f77b4" />
+      <circle cx="200" cy="98" r="3" fill="#1f77b4" />
+      <circle cx="280" cy="96" r="3" fill="#1f77b4" />
+      <circle cx="360" cy="98" r="3" fill="#1f77b4" />
+      <circle cx="440" cy="94" r="3" fill="#1f77b4" />
+      <circle cx="520" cy="92" r="3" fill="#1f77b4" />
     </svg>
   </div>
 
@@ -126,7 +158,6 @@
           <th>Status</th>
           <th>Last Fail (hrs)</th>
         </tr>
-
         <!-- rows injected here -->
       </table>
     </div>
@@ -144,7 +175,6 @@
           <th>Status</th>
           <th>Last Fail (hrs)</th>
         </tr>
-
         <!-- rows injected here -->
       </table>
     </div>

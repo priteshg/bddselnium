@@ -2,39 +2,30 @@ import fs from "fs";
 import path from "path";
 
 interface TallyItem {
+  id: string;
   name: string;
+  framework: "jest" | "playwright";
   runs: number;
   fails: number;
-  status: "passed" | "failed" | "unknown";
   lastFailed?: number;
-  flakePct?: number;
 }
-
-interface RunHistory {
-  timestamp: number;
-  flakyTotal: number;
-  flakyJest: number;
-  flakyPlaywright: number;
-}
-
-const refresh = process.argv.includes("--refresh");
 
 const root = process.cwd();
 const resultsDir = path.join(root, "test-results");
 
 const tallyJsonPath = path.join(resultsDir, "failure-tally.json");
 const tallyHtmlPath = path.join(resultsDir, "failure-tally.html");
-const historyJsonPath = path.join(resultsDir, "flake-history.json");
 
 const jestReportPath = path.join(root, "jest-report.json");
 const playwrightReportPath = path.join(resultsDir, "playwright-report.json");
 
+const refresh = process.argv.includes("--refresh");
+
 fs.mkdirSync(resultsDir, { recursive: true });
 
-/* -------------------- load previous state -------------------- */
+/* -------------------- load previous tally -------------------- */
 
 let tally: Record<string, TallyItem> = {};
-let history: RunHistory[] = [];
 
 if (!refresh && fs.existsSync(tallyJsonPath)) {
   try {
@@ -44,23 +35,21 @@ if (!refresh && fs.existsSync(tallyJsonPath)) {
   }
 }
 
-if (!refresh && fs.existsSync(historyJsonPath)) {
-  try {
-    history = JSON.parse(fs.readFileSync(historyJsonPath, "utf8"));
-  } catch {
-    history = [];
-  }
-}
+/* -------------------- helpers -------------------- */
 
-/* -------------------- tally update -------------------- */
-
-function update(id: string, name: string, failed: boolean) {
+function update(
+  id: string,
+  name: string,
+  framework: "jest" | "playwright",
+  failed: boolean
+) {
   if (!tally[id]) {
     tally[id] = {
+      id,
       name,
+      framework,
       runs: 0,
       fails: 0,
-      status: "unknown",
     };
   }
 
@@ -69,26 +58,42 @@ function update(id: string, name: string, failed: boolean) {
 
   if (failed) {
     t.fails += 1;
-    t.status = "failed";
     t.lastFailed = Date.now();
-  } else {
-    t.status = "passed";
   }
-
-  t.flakePct = (t.fails / t.runs) * 100;
 }
 
-/* -------------------- jest -------------------- */
+function hoursAgo(ts?: number) {
+  if (!ts) return "-";
+  return Math.floor((Date.now() - ts) / 3_600_000).toString();
+}
+
+function flakePct(t: TallyItem) {
+  return Math.round((t.fails / t.runs) * 100);
+}
+
+function rowClass(pct: number) {
+  if (pct === 0) return "good";
+  if (pct < 20) return "warn";
+  if (pct < 40) return "mid";
+  return "bad";
+}
+
+/* -------------------- ingest jest -------------------- */
 
 if (fs.existsSync(jestReportPath)) {
   const results = JSON.parse(fs.readFileSync(jestReportPath, "utf8"));
 
   for (const r of results) {
-    update(`JEST:${r.id}`, r.name, r.status === "failed");
+    update(
+      `JEST:${r.id}`,
+      r.name,
+      "jest",
+      r.status === "failed"
+    );
   }
 }
 
-/* -------------------- playwright -------------------- */
+/* -------------------- ingest playwright -------------------- */
 
 if (fs.existsSync(playwrightReportPath)) {
   const pw = JSON.parse(fs.readFileSync(playwrightReportPath, "utf8"));
@@ -96,83 +101,68 @@ if (fs.existsSync(playwrightReportPath)) {
   const walk = (suite: any) => {
     if (suite.specs) {
       for (const spec of suite.specs) {
-        const file = spec.location?.file || "unknown";
-        update(`PW:${file}::${spec.title}`, spec.title, !spec.ok);
+        const file = path.basename(spec.location?.file || "unknown");
+        const id = `PW:${file}::${spec.title}`;
+
+        update(
+          id,
+          spec.title,
+          "playwright",
+          !spec.ok
+        );
       }
     }
+
     if (suite.suites) {
-      for (const child of suite.suites) walk(child);
+      for (const child of suite.suites) {
+        walk(child);
+      }
     }
   };
 
   if (pw.suites) {
-    for (const s of pw.suites) walk(s);
+    for (const s of pw.suites) {
+      walk(s);
+    }
   }
 }
 
-/* -------------------- per-run summary -------------------- */
-
-let flakyJest = 0;
-let flakyPlaywright = 0;
-
-for (const [id, t] of Object.entries(tally)) {
-  if (t.fails > 0) {
-    if (id.startsWith("JEST:")) flakyJest++;
-    if (id.startsWith("PW:")) flakyPlaywright++;
-  }
-}
-
-const runSummary: RunHistory = {
-  timestamp: Date.now(),
-  flakyTotal: flakyJest + flakyPlaywright,
-  flakyJest,
-  flakyPlaywright,
-};
-
-history.push(runSummary);
-history = history.slice(-20); // keep last N runs
+/* -------------------- persist tally -------------------- */
 
 fs.writeFileSync(tallyJsonPath, JSON.stringify(tally, null, 2));
-fs.writeFileSync(historyJsonPath, JSON.stringify(history, null, 2));
 
-/* -------------------- helpers -------------------- */
+/* -------------------- derive stats -------------------- */
 
-function hoursAgo(ts?: number) {
-  if (!ts) return "-";
-  return Math.floor((Date.now() - ts) / 3_600_000).toString();
-}
+const items = Object.values(tally);
 
-function rowColour(pct: number) {
-  if (pct === 0) return "#d8f5d0";
-  if (pct < 20) return "#f7fdd0";
-  if (pct < 40) return "#fff4b8";
-  return "#f8d0d0";
-}
+const jestItems = items.filter(t => t.framework === "jest");
+const pwItems = items.filter(t => t.framework === "playwright");
 
-function sortIds(ids: string[]) {
-  return ids.sort((a, b) => {
-    const fa = tally[a].flakePct || 0;
-    const fb = tally[b].flakePct || 0;
-    if (fb !== fa) return fb - fa;
-    return tally[b].fails - tally[a].fails;
-  });
-}
+const totalTests = items.length;
+const flakyTests = items.filter(t => t.fails > 0).length;
+const flakyJest = jestItems.filter(t => t.fails > 0).length;
+const flakyPlaywright = pwItems.filter(t => t.fails > 0).length;
 
-function buildRows(ids: string[]) {
-  return ids
-    .map((id, i) => {
-      const t = tally[id];
-      const pct = Number(t.flakePct!.toFixed(1));
+/* -------------------- html rows -------------------- */
 
+function buildRows(list: TallyItem[]) {
+  return list
+    .sort((a, b) => {
+      const pa = flakePct(a);
+      const pb = flakePct(b);
+      if (pb !== pa) return pb - pa;
+      return b.fails - a.fails;
+    })
+    .map((t, i) => {
+      const pct = flakePct(t);
       return `
-        <tr style="background:${rowColour(pct)}">
+        <tr class="${rowClass(pct)}">
           <td class="num">${i + 1}</td>
-          <td class="text">${id}</td>
-          <td class="text">${t.name}</td>
+          <td class="id">${t.id}</td>
+          <td>${t.name}</td>
           <td class="num">${t.runs}</td>
           <td class="num">${t.fails}</td>
           <td class="num">${pct}%</td>
-          <td class="num">${t.status}</td>
           <td class="num">${hoursAgo(t.lastFailed)}</td>
         </tr>
       `;
@@ -180,97 +170,115 @@ function buildRows(ids: string[]) {
     .join("");
 }
 
-/* -------------------- trend svg -------------------- */
-
-function buildTrendPoints(
-  values: number[],
-  max: number,
-  height = 110
-) {
-  const step = 540 / Math.max(values.length - 1, 1);
-
-  return values
-    .map((v, i) => {
-      const x = 40 + i * step;
-      const y = height - (v / Math.max(max, 1)) * 80;
-      return `${x},${y}`;
-    })
-    .join(" ");
-}
-
-const jestTrend = history.map(h => h.flakyJest);
-const pwTrend = history.map(h => h.flakyPlaywright);
-const maxTrend = Math.max(...jestTrend, ...pwTrend, 1);
-
-const jestPoints = buildTrendPoints(jestTrend, maxTrend);
-const pwPoints = buildTrendPoints(pwTrend, maxTrend);
-
 /* -------------------- html -------------------- */
-
-const pwIds = sortIds(Object.keys(tally).filter(k => k.startsWith("PW:")));
-const jestIds = sortIds(Object.keys(tally).filter(k => k.startsWith("JEST:")));
-
-const lastRunHours = Math.floor(
-  (Date.now() - runSummary.timestamp) / 3_600_000
-);
 
 const html = `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Flaky Test Report</title>
+  <title>Failure Tally</title>
   <style>
-    body { font-family: system-ui, Arial; padding: 20px; }
-    .summary { display: flex; gap: 24px; padding: 12px; background:#f7f9fb; border:1px solid #ddd; margin-bottom:20px; }
-    .tables { display:flex; gap:20px; }
-    .col { width:50%; }
-    table { border-collapse:collapse; width:100%; font-size:13px; }
-    th,td { border:1px solid #ccc; padding:6px; }
-    th { background:#eee; position:sticky; top:0; }
-    td.num { text-align:center; }
-    td.text { text-align:left; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+                   Roboto, Helvetica, Arial, sans-serif;
+      font-size: 14px;
+      color: #222;
+      margin: 20px;
+    }
+
+    .summary span { margin-right: 18px; }
+
+    .tables {
+      display: flex;
+      gap: 20px;
+    }
+
+    .tables > div {
+      flex: 1;
+      min-width: 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    th, td {
+      padding: 6px 8px;
+      border-bottom: 1px solid #eee;
+      word-break: break-word;
+    }
+
+    th {
+      background: #f5f7fa;
+      font-weight: 600;
+    }
+
+    td.num {
+      width: 60px;
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    td.id {
+      font-family: monospace;
+      font-size: 11px;
+      color: #555;
+    }
+
+    tr.good { background: #e8f5e9; }
+    tr.warn { background: #fff8e1; }
+    tr.mid  { background: #fff3cd; }
+    tr.bad  { background: #f8d7da; }
   </style>
 </head>
 <body>
 
+<h1>Failure Tally</h1>
+
 <div class="summary">
-  <div><strong>Total tests:</strong> ${Object.keys(tally).length}</div>
-  <div><strong>Flaky tests:</strong> ${runSummary.flakyTotal}</div>
-  <div><strong>Jest flakes:</strong> ${runSummary.flakyJest}</div>
-  <div><strong>Playwright flakes:</strong> ${runSummary.flakyPlaywright}</div>
-  <div><strong>Last run:</strong> ${lastRunHours}h ago</div>
+  <span><strong>Total tests:</strong> ${totalTests}</span>
+  <span><strong>Flaky tests:</strong> ${flakyTests}</span>
+  <span><strong>Jest flakes:</strong> ${flakyJest}</span>
+  <span><strong>Playwright flakes:</strong> ${flakyPlaywright}</span>
 </div>
 
-<h3>Flaky tests per run</h3>
-<svg width="100%" height="130" viewBox="0 0 600 130">
-  <line x1="40" y1="110" x2="580" y2="110" stroke="#ccc"/>
-  <polyline fill="none" stroke="#1f77b4" stroke-width="2" points="${jestPoints}"/>
-  <polyline fill="none" stroke="#e5533d" stroke-width="2" points="${pwPoints}"/>
-</svg>
-
 <div class="tables">
-  <div class="col">
+
+  <div>
     <h2>Playwright Tests</h2>
     <table>
       <tr>
-        <th>#</th><th>ID</th><th>Name</th><th>Runs</th>
-        <th>Fails</th><th>Flake %</th><th>Status</th><th>Last Fail (hrs)</th>
+        <th>#</th>
+        <th>ID</th>
+        <th>Name</th>
+        <th>Runs</th>
+        <th>Fails</th>
+        <th>Flake %</th>
+        <th>Last fail (hrs)</th>
       </tr>
-      ${buildRows(pwIds)}
+      ${buildRows(pwItems)}
     </table>
   </div>
 
-  <div class="col">
+  <div>
     <h2>Jest Tests</h2>
     <table>
       <tr>
-        <th>#</th><th>ID</th><th>Name</th><th>Runs</th>
-        <th>Fails</th><th>Flake %</th><th>Status</th><th>Last Fail (hrs)</th>
+        <th>#</th>
+        <th>ID</th>
+        <th>Name</th>
+        <th>Runs</th>
+        <th>Fails</th>
+        <th>Flake %</th>
+        <th>Last fail (hrs)</th>
       </tr>
-      ${buildRows(jestIds)}
+      ${buildRows(jestItems)}
     </table>
   </div>
+
 </div>
 
 </body>
@@ -279,4 +287,4 @@ const html = `
 
 fs.writeFileSync(tallyHtmlPath, html);
 
-console.log(`Flake report generated (${refresh ? "reset" : "incremental"})`);
+console.log("Failure tally generated");

@@ -1,15 +1,16 @@
-// jest.setup.ts
-
 import "@testing-library/jest-dom"
 import "./src/shared/util/translations.test-util"
-
 import { jest } from "@jest/globals"
 
-const DEFAULT_CI_RETRIES = 3
+const DEFAULT_RETRIES = 3
 
 const raw = process.env.JEST_RETRIES
-const parsed = raw === undefined ? DEFAULT_CI_RETRIES : Number(raw)
-const retries = Number.isFinite(parsed) ? parsed : DEFAULT_CI_RETRIES
+
+const retries =
+  raw === undefined
+    ? DEFAULT_RETRIES
+    : Number.isFinite(Number(raw))
+      ? Number(raw)
+      : DEFAULT_RETRIES
 
 jest.retryTimes(retries, { logErrorsBeforeRetry: true })
-console.log("Jest retries =", retries)

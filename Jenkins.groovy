@@ -1,11 +1,14 @@
 stage('Run Jest BDD tests') {
   steps {
     script {
-      sh '''
-        set -e
-        npx jest --showConfig | grep -i -E "testRunner|retryTimes" || true
-        npx jest --ci --runInBand --retryTimes=0 --coverage --maxWorkers=50
-      '''
+      withEnv(['JEST_RETRIES=0']) {
+        sh '''
+          set -e
+          node -e "console.log('JEST_RETRIES=', process.env.JEST_RETRIES)"
+          npx jest --showConfig | grep -i -E "testRunner|retryTimes" || true
+          npm test -- --coverage --runInBand --maxWorkers=50
+        '''
+      }
     }
   }
 }

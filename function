@@ -1,0 +1,68 @@
+Copy code
+Ts
+export interface TestStabilityRow {
+  testName: string
+  totalRuns: number
+  totalFailures: number
+  status: "passed" | "failed" | "unknown"
+  lastFailedAt?: number
+  flakePercentage?: number
+}
+
+function hoursSince(timestamp?: number): string {
+  if (!timestamp) return "-"
+  return Math.floor((Date.now() - timestamp) / 3_600_000).toString()
+}
+
+function flakeHeatColor(flakePercentage: number): string {
+  if (flakePercentage === 0) return "#2ea043"
+  if (flakePercentage < 20) return "#d29922"
+  if (flakePercentage < 40) return "#f85149"
+  return "#8b0000"
+}
+
+export function sortByFlakiness(
+  testIds: string[],
+  rowsById: Record<string, TestStabilityRow>
+): string[] {
+  return testIds.sort((leftId, rightId) => {
+    const leftFlakePercentage = rowsById[leftId].flakePercentage ?? 0
+    const rightFlakePercentage = rowsById[rightId].flakePercentage ?? 0
+
+    if (rightFlakePercentage !== leftFlakePercentage) {
+      return rightFlakePercentage - leftFlakePercentage
+    }
+
+    const leftFailureCount = rowsById[leftId].totalFailures
+    const rightFailureCount = rowsById[rightId].totalFailures
+
+    return rightFailureCount - leftFailureCount
+  })
+}
+
+export function renderHtmlRows(
+  testIds: string[],
+  rowsById: Record<string, TestStabilityRow>
+): string {
+  return testIds
+    .map((testId, index): string => {
+      const row = rowsById[testId]
+      const flakePercentage = row.flakePercentage ?? 0
+      const flakePctDisplay = Number(flakePercentage.toFixed(1))
+
+      return `
+        <tr style="background:${flakeHeatColor(flakePercentage)}">
+          <td class="num">${index + 1}</td>
+          <td class="id">${testId}</td>
+          <td class="name">${row.testName}</td>
+          <td class="num">${row.totalRuns}</td>
+          <td class="num">${row.totalFailures}</td>
+          <td class="num">${flakePctDisplay}%</td>
+          <td class="status">${row.status}</td>
+          <td class="small">${hoursSince(row.lastFailedAt)}</td>
+        </tr>
+      `
+    })
+    .join("")
+}
+```0

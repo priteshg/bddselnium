@@ -1,41 +1,21 @@
-stage('Build tools') {
+stage('Generate Tally Report') {
   steps {
     script {
-      sh '''
-        set -e
-        rm -rf dist-tools
-        npx tsc -p tsconfig.tools.json
-      '''
-    }
-  }
-}
+      def refreshFlag = params.RESET_TALLY ? "--refresh" : ""
 
-stage('Run Jest BDD tests') {
-  steps {
-    script {
-      withEnv(['JEST_RETRIES=0']) {
-        int jestExit = sh(
-          script: 'npm test -- --coverage --maxWorkers=50%',
-          returnStatus: true
-        )
-        echo "Jest exit code: ${jestExit}"
-        env.JEST_EXIT_CODE = "${jestExit}"
-      }
-    }
-  }
-}
+      sh "node dist-tools/jestPlaywrightTally.js ${refreshFlag}"
 
-stage('Generate JSONL artifacts') {
-  steps {
-    script {
+      // New: generate JSONL files for Grafana
       sh '''
         set -e
         mkdir -p test-results
-        node dist-tools/jsonl/playwright-to-jsonl.js test-results/playwright-report.json test-results/playwright-events.jsonl
-      '''
 
-      archiveArtifacts artifacts: 'test-results/jest-events.jsonl,test-results/playwright-events.jsonl', allowEmptyArchive: false
+        # Playwright JSON report to JSONL
+        node dist-tools/jsonl/playwright-to-jsonl.js test-results/playwright-report.json test-results/playwright-events.jsonl
+
+        # Jest JSON to JSONL
+        node dist-tools/jsonl/jest-to-jsonl.js jest-report.json test-results/jest-events.jsonl
+      '''
     }
   }
 }
-

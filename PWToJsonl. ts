@@ -50,8 +50,16 @@ type PlaywrightJsonReport = {
   suites?: PlaywrightSuite[]
 }
 
-function hashId(input: string): string {
-  return crypto.createHash("sha1").update(input).digest("hex").slice(0, 10)
+const DEFAULT_INPUT_PATH = "test-results/playwright-report.json"
+const DEFAULT_OUTPUT_PATH = "test-results/playwright-events.jsonl"
+const MAX_ERROR_LENGTH = 800
+const HASH_LENGTH = 10
+
+function logInfo(message: string): void {
+  if (process.env.DEBUG_JSONL === "1") {
+    // eslint-disable-next-line no-console
+    console.log(message)
+  }
 }
 
 function ensureParentDir(filePath: string): void {
@@ -61,6 +69,15 @@ function ensureParentDir(filePath: string): void {
 function asString(value: unknown): string {
   if (value === null || value === undefined) return ""
   return String(value)
+}
+
+function truncate(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text
+  return text.slice(0, maxLen)
+}
+
+function hashId(input: string): string {
+  return crypto.createHash("sha256").update(input).digest("hex").slice(0, HASH_LENGTH)
 }
 
 function toStatus(result: PlaywrightResult | undefined): Status {
@@ -76,40 +93,54 @@ function toStatus(result: PlaywrightResult | undefined): Status {
 
 function errorMessageFrom(result: PlaywrightResult | undefined): string {
   const direct = asString(result?.error?.message)
-  if (direct) return direct.slice(0, 800)
+  if (direct) return truncate(direct, MAX_ERROR_LENGTH)
 
   const errors = Array.isArray(result?.errors) ? result.errors : []
   if (!errors.length) return ""
 
   const first = errors[0]
-  return asString(first?.message || first?.value).slice(0, 800)
+  return truncate(asString(first?.message || first?.value), MAX_ERROR_LENGTH)
 }
 
-function walkSuites(suites: PlaywrightSuite[], onSpec: (spec: PlaywrightSpec) => void): void {
-  for (const suite of suites) {
-    const specs = Array.isArray(suite.specs) ? suite.specs : []
-    for (const spec of specs) onSpec(spec)
-
-    const children = Array.isArray(suite.suites) ? suite.suites : []
-    if (children.length) walkSuites(children, onSpec)
+function safeReadJsonReport(filePath: string): PlaywrightJsonReport | null {
+  try {
+    const raw = fs.readFileSync(filePath, "utf8")
+    return JSON.parse(raw) as PlaywrightJsonReport
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    logInfo(`Failed to read or parse ${filePath}. ${message}`)
+    process.exitCode = 1
+    return null
   }
 }
 
 function writeJsonl(filePath: string, events: PlaywrightEvent[]): void {
-  fs.writeFileSync(filePath, events.map((e) => JSON.stringify(e)).join("\n") + "\n", "utf8")
+  const content = events.map((e) => JSON.stringify(e)).join("\n") + "\n"
+  fs.writeFileSync(filePath, content, "utf8")
 }
 
-function main(): void {
-  const inputPath = process.argv[2] || "test-results/playwright-report.json"
-  const outputPath = process.argv[3] || "test-results/playwright-events.jsonl"
+function collectSpecs(rootSuites: PlaywrightSuite[]): PlaywrightSpec[] {
+  const specs: PlaywrightSpec[] = []
+  const stack: PlaywrightSuite[] = [...rootSuites]
 
-  const report = JSON.parse(fs.readFileSync(inputPath, "utf8")) as PlaywrightJsonReport
-  const timestampUtc = new Date().toISOString()
+  while (stack.length) {
+    const suite = stack.pop()
+    if (!suite) break
 
+    const suiteSpecs = Array.isArray(suite.specs) ? suite.specs : []
+    for (const spec of suiteSpecs) specs.push(spec)
+
+    const children = Array.isArray(suite.suites) ? suite.suites : []
+    for (const child of children) stack.push(child)
+  }
+
+  return specs
+}
+
+function toEvents(specs: PlaywrightSpec[], timestampUtc: string): PlaywrightEvent[] {
   const events: PlaywrightEvent[] = []
-  const rootSuites = Array.isArray(report.suites) ? report.suites : []
 
-  walkSuites(rootSuites, (spec) => {
+  for (const spec of specs) {
     const testPath = asString(spec.file)
     const specTitle = asString(spec.title)
 
@@ -121,28 +152,38 @@ function main(): void {
       const results: PlaywrightResult[] = Array.isArray(test.results) ? test.results : []
       const lastResult = results.length ? results[results.length - 1] : undefined
 
-      const status = toStatus(lastResult)
-      const durationMs = typeof lastResult?.duration === "number" ? lastResult.duration : 0
-      const errorMessage = errorMessageFrom(lastResult)
-
       events.push({
         test_id: hashId(`${testPath}::${testName}`),
         tool: "playwright",
-        status,
-        duration_ms: durationMs,
+        status: toStatus(lastResult),
+        duration_ms: typeof lastResult?.duration === "number" ? lastResult.duration : 0,
         timestamp_utc: timestampUtc,
         test_name: testName,
         test_path: testPath,
-        error_message: errorMessage
+        error_message: errorMessageFrom(lastResult),
       })
     }
-  })
+  }
+
+  return events
+}
+
+function main(): void {
+  const inputPath = process.argv[2] || DEFAULT_INPUT_PATH
+  const outputPath = process.argv[3] || DEFAULT_OUTPUT_PATH
+
+  const report = safeReadJsonReport(inputPath)
+  if (!report) return
+
+  const timestampUtc = new Date().toISOString()
+  const rootSuites = Array.isArray(report.suites) ? report.suites : []
+  const specs = collectSpecs(rootSuites)
+  const events = toEvents(specs, timestampUtc)
 
   ensureParentDir(outputPath)
   writeJsonl(outputPath, events)
 
-  // eslint-disable-next-line no-console
-  console.log(`Wrote ${events.length} Playwright events to ${outputPath}`)
+  logInfo(`Wrote ${events.length} Playwright events to ${outputPath}`)
 }
 
 main()

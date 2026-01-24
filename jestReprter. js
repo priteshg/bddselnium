@@ -1,11 +1,6 @@
 import crypto from "crypto"
 import { writeFileSync } from "fs"
 import { relative } from "path"
-import type { AggregatedResult, Reporter, Test, TestResult } from "@jest/reporters"
-
-type ReporterOptions = {
-  outputFile?: string
-}
 
 type Status = "passed" | "failed" | "skipped" | "unknown"
 
@@ -18,16 +13,20 @@ type OutputRow = {
   errorMessage: string
 }
 
+type ReporterOptions = {
+  outputFile?: string
+}
+
 function asText(value: unknown): string {
   return typeof value === "string" ? value : String(value ?? "")
 }
 
-function normalizeStatus(value: unknown): Status {
+function normaliseStatus(value: unknown): Status {
   const s = asText(value)
   if (s === "passed") return "passed"
   if (s === "failed") return "failed"
   if (s === "skipped") return "skipped"
-  if (s === "pending") return "skipped"
+  if (s === "skipping") return "skipped"
   if (s === "todo") return "skipped"
   if (s === "disabled") return "skipped"
   return "unknown"
@@ -38,47 +37,44 @@ function stableHash(value: string): string {
 }
 
 function cleanName(raw: string): string {
-  return raw.replace(/[\{\[\(\=\:\;].*$/, "").trim()
+  return raw.replace(/\s*\(.*?\)\s*/g, "").trim()
 }
 
-function pickFailureMessage(entry: { failureMessages?: unknown }): string {
-  const msgs = entry.failureMessages
-  if (!Array.isArray(msgs) || msgs.length === 0) return ""
-  return asText(msgs[0])
-}
+export default class CustomJestReporter {
+  private output: string
+  private rows: OutputRow[] = []
+  private counters: Record<string, number> = {}
 
-export default class CustomJestReporter implements Reporter {
-  private readonly outputFile: string
-  private readonly rows: OutputRow[] = []
-
-  public constructor(_globalConfig: unknown, options?: ReporterOptions) {
-    this.outputFile = options?.outputFile || "jest-report.json"
+  constructor(_: unknown, options: ReporterOptions = {}) {
+    this.output = options.outputFile ?? "jest-report.json"
   }
 
-  public onTestResult(_test: Test, testResult: TestResult): void {
+  onTestResult(_: unknown, testResult: any) {
     const file = relative(process.cwd(), testResult.testFilePath)
-    const entries = Array.isArray(testResult.testResults) ? testResult.testResults : []
 
-    for (const entry of entries) {
-      const fullName = asText(entry.fullName || entry.title)
-      const id = `${file}::${stableHash(`${file}::${fullName}`)}`
-      const status = normalizeStatus(entry.status)
+    if (!this.counters[file]) {
+      this.counters[file] = 1
+    }
 
-      const durationMs = Number.isFinite(entry.duration) ? Number(entry.duration) : 0
-      const errorMessage = status === "failed" ? pickFailureMessage(entry) : ""
+    for (const test of testResult.testResults) {
+      const index = this.counters[file]
+      const id = `${file}::test-${String(index).padStart(3, "0")}`
+      const name = cleanName(test.title)
 
       this.rows.push({
         id,
-        name: cleanName(fullName),
-        status,
+        name,
+        status: normaliseStatus(test.status),
         file,
-        durationMs,
-        errorMessage,
+        durationMs: Number(test.duration ?? 0),
+        errorMessage: asText(test.failureMessages?.[0] ?? "")
       })
+
+      this.counters[file] += 1
     }
   }
 
-  public onRunComplete(_contexts: Set<unknown>, _results: AggregatedResult): void {
-    writeFileSync(this.outputFile, JSON.stringify(this.rows, null, 2), "utf8")
+  onRunComplete() {
+    writeFileSync(this.output, JSON.stringify(this.rows, null, 2))
   }
 }

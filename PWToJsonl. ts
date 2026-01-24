@@ -1,0 +1,118 @@
+import fs from "fs"
+import path from "path"
+import crypto from "crypto"
+
+type Status = "passed" | "failed" | "skipped" | "unknown"
+
+type PlaywrightEvent = {
+  test_id: string
+  tool: "playwright"
+  status: Status
+  duration_ms: number
+  timestamp_utc: string
+  test_name: string
+  test_path: string
+  error_message: string
+}
+
+function hashId(input: string): string {
+  return crypto.createHash("sha1").update(input).digest("hex").slice(0, 10)
+}
+
+function ensureParentDir(filePath: string): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+}
+
+function asString(value: unknown): string {
+  if (value === null || value === undefined) return ""
+  return String(value)
+}
+
+function last<T>(items: T[]): T | undefined {
+  return items.length ? items[items.length - 1] : undefined
+}
+
+function toStatus(result: any): Status {
+  const raw = asString(result?.outcome || result?.status)
+
+  if (raw === "expected" || raw === "passed") return "passed"
+  if (raw === "skipped") return "skipped"
+  if (raw === "unexpected" || raw === "failed" || raw === "timedOut") return "failed"
+  if (raw === "flaky") return "failed"
+
+  return "unknown"
+}
+
+function errorMessageFrom(result: any): string {
+  const direct = asString(result?.error?.message)
+  if (direct) return direct.slice(0, 800)
+
+  const errors = Array.isArray(result?.errors) ? result.errors : []
+  const fromArray = errors.length ? asString(errors[0]?.message || errors[0]?.value) : ""
+  return fromArray.slice(0, 800)
+}
+
+function walkSuites(suites: any[], onSpec: (spec: any) => void): void {
+  for (const suite of suites) {
+    const specs = Array.isArray(suite?.specs) ? suite.specs : []
+    for (const spec of specs) onSpec(spec)
+
+    const children = Array.isArray(suite?.suites) ? suite.suites : []
+    if (children.length) walkSuites(children, onSpec)
+  }
+}
+
+function writeJsonl(filePath: string, events: PlaywrightEvent[]): void {
+  const content = events.map((e) => JSON.stringify(e)).join("\n") + "\n"
+  fs.writeFileSync(filePath, content, "utf8")
+}
+
+function main(): void {
+  const inputPath = process.argv[2] || "test-results/playwright-report.json"
+  const outputPath = process.argv[3] || "test-results/playwright-events.jsonl"
+
+  const report = JSON.parse(fs.readFileSync(inputPath, "utf8"))
+  const timestampUtc = new Date().toISOString()
+
+  const events: PlaywrightEvent[] = []
+  const rootSuites = Array.isArray(report?.suites) ? report.suites : []
+
+  walkSuites(rootSuites, (spec) => {
+    const specFile = asString(spec?.file)
+    const specTitle = asString(spec?.title)
+
+    const tests = Array.isArray(spec?.tests) ? spec.tests : []
+    for (const test of tests) {
+      const testTitle = asString(test?.title)
+      const testName = [specTitle, testTitle].filter(Boolean).join(" ").trim()
+
+      const results = Array.isArray(test?.results) ? test.results : []
+      const lastResult = last(results)
+
+      const status = toStatus(lastResult)
+      const durationMs = typeof lastResult?.duration === "number" ? lastResult.duration : 0
+      const errorMessage = lastResult ? errorMessageFrom(lastResult) : ""
+
+      const testId = hashId(`${specFile}::${testName}`)
+
+      events.push({
+        test_id: testId,
+        tool: "playwright",
+        status,
+        duration_ms: durationMs,
+        timestamp_utc: timestampUtc,
+        test_name: testName,
+        test_path: specFile,
+        error_message: errorMessage,
+      })
+    }
+  })
+
+  ensureParentDir(outputPath)
+  writeJsonl(outputPath, events)
+
+  // eslint-disable-next-line no-console
+  console.log(`Wrote ${events.length} Playwright events to ${outputPath}`)
+}
+
+main()

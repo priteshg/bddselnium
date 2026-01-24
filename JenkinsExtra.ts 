@@ -3,19 +3,28 @@ stage('Generate Tally Report') {
     script {
       def refreshFlag = params.RESET_TALLY ? "--refresh" : ""
 
+      // Existing
       sh "node dist-tools/jestPlaywrightTally.js ${refreshFlag}"
 
-      // New: generate JSONL files for Grafana
+      // New: JSONL for Grafana
       sh '''
         set -e
         mkdir -p test-results
 
-        # Playwright JSON report to JSONL
+        node dist-tools/jsonl/jestResultsToJsonl.js jest-report.json test-results/jest-events.jsonl
         node dist-tools/jsonl/playwright-to-jsonl.js test-results/playwright-report.json test-results/playwright-events.jsonl
-
-        # Jest JSON to JSONL
-        node dist-tools/jsonl/jest-to-jsonl.js jest-report.json test-results/jest-events.jsonl
       '''
+    }
+  }
+  post {
+    always {
+      // Existing
+      archiveArtifacts artifacts: 'test-stability-report.html', fingerprint: true
+      archiveArtifacts artifacts: 'test-stability-history.json', fingerprint: true
+
+      // New
+      archiveArtifacts artifacts: 'test-results/jest-events.jsonl', fingerprint: true
+      archiveArtifacts artifacts: 'test-results/playwright-events.jsonl', fingerprint: true
     }
   }
 }

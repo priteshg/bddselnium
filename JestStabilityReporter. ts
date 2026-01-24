@@ -1,0 +1,91 @@
+import fs from "fs"
+import path from "path"
+import crypto from "crypto"
+
+type JestAssertion = {
+  fullName?: string
+  title?: string
+  status?: string
+  duration?: number | null
+  ancestorTitles?: string[]
+  failureMessages?: unknown
+}
+
+type JestFileResult = {
+  testFilePath: string
+  testResults: JestAssertion[]
+}
+
+type ReporterOptions = {
+  outputFile?: string
+}
+
+type TestEvent = {
+  test_id: string
+  tool: "jest"
+  status: string
+  duration_ms: number
+  timestamp_utc: string
+  test_name: string
+  test_path: string
+  error_message: string
+}
+
+function toPosixPath(filePath: string): string {
+  return filePath.split(path.sep).join("/")
+}
+
+function hashId(input: string): string {
+  return crypto.createHash("sha1").update(input).digest("hex").slice(0, 10)
+}
+
+function buildTestName(assertion: JestAssertion): string {
+  if (assertion.fullName) return assertion.fullName
+  const titles = Array.isArray(assertion.ancestorTitles) ? assertion.ancestorTitles : []
+  const title = assertion.title ? String(assertion.title) : ""
+  return [...titles, title].filter(Boolean).join(" ").trim()
+}
+
+function firstFailureMessage(assertion: JestAssertion): string {
+  const messages = Array.isArray(assertion.failureMessages) ? assertion.failureMessages : []
+  if (messages.length === 0) return ""
+  return String(messages[0]).slice(0, 800)
+}
+
+function ensureParentDir(filePath: string): void {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true })
+}
+
+export default class JestStabilityReporter {
+  private readonly outputFile: string
+
+  constructor(_: unknown, options?: ReporterOptions) {
+    const outputFile = options?.outputFile ?? "test-results/jest-events.jsonl"
+    this.outputFile = outputFile
+    ensureParentDir(outputFile)
+    fs.writeFileSync(outputFile, "")
+  }
+
+  onTestResult(_: unknown, testResult: JestFileResult): void {
+    const timestampUtc = new Date().toISOString()
+    const testPath = toPosixPath(testResult.testFilePath)
+
+    for (const assertion of testResult.testResults) {
+      const testName = buildTestName(assertion)
+      const testId = hashId(`${testPath}::${testName}`)
+
+      const event: TestEvent = {
+        test_id: testId,
+        tool: "jest",
+        status: assertion.status ?? "unknown",
+        duration_ms: assertion.duration ?? 0,
+        timestamp_utc: timestampUtc,
+        test_name: testName,
+        test_path: testPath,
+        error_message: firstFailureMessage(assertion),
+      }
+
+      fs.appendFileSync(this.outputFile, JSON.stringify(event) + "\n")
+    }
+  }
+}

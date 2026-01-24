@@ -1,0 +1,41 @@
+stage('Build tools') {
+  steps {
+    script {
+      sh '''
+        set -e
+        rm -rf dist-tools
+        npx tsc -p tsconfig.tools.json
+      '''
+    }
+  }
+}
+
+stage('Run Jest BDD tests') {
+  steps {
+    script {
+      withEnv(['JEST_RETRIES=0']) {
+        int jestExit = sh(
+          script: 'npm test -- --coverage --maxWorkers=50%',
+          returnStatus: true
+        )
+        echo "Jest exit code: ${jestExit}"
+        env.JEST_EXIT_CODE = "${jestExit}"
+      }
+    }
+  }
+}
+
+stage('Generate JSONL artifacts') {
+  steps {
+    script {
+      sh '''
+        set -e
+        mkdir -p test-results
+        node dist-tools/jsonl/playwright-to-jsonl.js test-results/playwright-report.json test-results/playwright-events.jsonl
+      '''
+
+      archiveArtifacts artifacts: 'test-results/jest-events.jsonl,test-results/playwright-events.jsonl', allowEmptyArchive: false
+    }
+  }
+}
+

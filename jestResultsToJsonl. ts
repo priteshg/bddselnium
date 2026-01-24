@@ -1,179 +1,90 @@
 // tools/jsonl/jestResultsToJsonl.ts
-
 import fs from "fs"
 import path from "path"
 import crypto from "crypto"
 
 type Status = "passed" | "failed" | "skipped" | "unknown"
 
-type JestEvent = {
+type JestReportRow = {
+  id: string
+  name: string
+  status: string
+}
+
+type JestJsonlEvent = {
   test_id: string
   tool: "jest"
   status: Status
-  duration_ms: number
   timestamp_utc: string
   test_name: string
   test_path: string
-  error_message: string
-}
-
-type JestAssertionResult = {
-  fullName?: string
-  title?: string
-  status?: string
-  duration?: number
-  failureMessages?: string[]
-}
-
-type JestSuiteResult = {
-  name?: string
-  testFilePath?: string
-  assertionResults?: JestAssertionResult[]
-  status?: string
-  failureMessage?: string
-  message?: string
-  perfStats?: {
-    start?: number
-    end?: number
-    runtime?: number
-  }
-}
-
-type JestJsonReport = {
-  testResults?: JestSuiteResult[]
-  results?: {
-    testResults?: JestSuiteResult[]
-  }
 }
 
 const DEFAULT_INPUT_PATH = "jest-report.json"
 const DEFAULT_OUTPUT_PATH = "test-results/jest-events.jsonl"
-const MAX_ERROR_MESSAGE_LENGTH = 800
 const TEST_ID_HEX_LENGTH = 10
 
 function ensureParentDir(filePath: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true })
 }
 
-function asString(value: unknown): string {
-  if (value === null || value === undefined) return ""
-  return String(value)
-}
-
-function clampText(text: string, maxLen: number): string {
-  if (text.length <= maxLen) return text
-  return text.slice(0, maxLen)
-}
-
-function hashTestId(source: string): string {
-  return crypto.createHash("sha256").update(source).digest("hex").slice(0, TEST_ID_HEX_LENGTH)
-}
-
-function parseJsonFile<T>(filePath: string): T {
-  const raw = fs.readFileSync(filePath, "utf8")
-  return JSON.parse(raw) as T
-}
-
-function getSuites(report: JestJsonReport): JestSuiteResult[] {
-  if (Array.isArray(report.testResults)) return report.testResults
-  if (Array.isArray(report.results?.testResults)) return report.results.testResults
-  return []
-}
-
 function normalizeStatus(raw: string): Status {
   if (raw === "passed") return "passed"
   if (raw === "failed") return "failed"
-
-  if (raw === "pending") return "skipped"
   if (raw === "skipped") return "skipped"
+  if (raw === "pending") return "skipped"
   if (raw === "disabled") return "skipped"
   if (raw === "todo") return "skipped"
-
   return "unknown"
 }
 
-function getSuitePath(suite: JestSuiteResult): string {
-  const fromTestFilePath = asString(suite.testFilePath)
-  if (fromTestFilePath) return fromTestFilePath
-
-  const fromName = asString(suite.name)
-  if (fromName) return fromName
-
-  return "unknown"
+function hashId(value: string): string {
+  return crypto.createHash("sha256").update(value).digest("hex").slice(0, TEST_ID_HEX_LENGTH)
 }
 
-function getTestName(assertion: JestAssertionResult, suite: JestSuiteResult): string {
-  const fullName = asString(assertion.fullName)
-  if (fullName) return fullName
-
-  const title = asString(assertion.title)
-  if (title) return title
-
-  const suiteName = asString(suite.name)
-  if (suiteName) return suiteName
-
-  return "unknown"
+function parseId(id: string): { testPath: string; stableId: string } {
+  const parts = id.split("::")
+  const testPath = parts[0] || "unknown"
+  const stableId = id || hashId(testPath)
+  return { testPath, stableId }
 }
 
-function getDurationMs(assertion: JestAssertionResult, suite: JestSuiteResult): number {
-  const fromAssertion = assertion.duration
-  if (typeof fromAssertion === "number" && Number.isFinite(fromAssertion)) return fromAssertion
+function readReport(filePath: string): JestReportRow[] {
+  const raw = fs.readFileSync(filePath, "utf8")
+  const parsed = JSON.parse(raw) as unknown
 
-  const runtime = suite.perfStats?.runtime
-  if (typeof runtime === "number" && Number.isFinite(runtime)) return runtime
-
-  const start = suite.perfStats?.start
-  const end = suite.perfStats?.end
-  if (typeof start === "number" && typeof end === "number" && Number.isFinite(start) && Number.isFinite(end)) {
-    return Math.max(0, end - start)
+  if (!Array.isArray(parsed)) {
+    throw new Error("Expected jest-report.json to be a JSON array of { id, name, status }")
   }
 
-  return 0
-}
-
-function getErrorMessage(assertion: JestAssertionResult, suite: JestSuiteResult): string {
-  const failureMessages = Array.isArray(assertion.failureMessages) ? assertion.failureMessages : []
-  const firstAssertionFailure = failureMessages.at(0)
-  if (firstAssertionFailure) return clampText(String(firstAssertionFailure), MAX_ERROR_MESSAGE_LENGTH)
-
-  const suiteFailure = asString(suite.failureMessage || suite.message)
-  if (suiteFailure) return clampText(suiteFailure, MAX_ERROR_MESSAGE_LENGTH)
-
-  return ""
-}
-
-function buildEvents(suites: JestSuiteResult[], timestampUtc: string): JestEvent[] {
-  const events: JestEvent[] = []
-
-  for (const suite of suites) {
-    const testPath = getSuitePath(suite)
-    const assertions = Array.isArray(suite.assertionResults) ? suite.assertionResults : []
-
-    for (const assertion of assertions) {
-      const testName = getTestName(assertion, suite)
-      const status = normalizeStatus(asString(assertion.status))
-      const durationMs = getDurationMs(assertion, suite)
-      const errorMessage = status === "failed" ? getErrorMessage(assertion, suite) : ""
-
-      events.push({
-        test_id: hashTestId(`${testPath}::${testName}`),
-        tool: "jest",
-        status,
-        duration_ms: durationMs,
-        timestamp_utc: timestampUtc,
-        test_name: testName,
-        test_path: testPath,
-        error_message: errorMessage,
-      })
+  return parsed.map((row) => {
+    const obj = row as Record<string, unknown>
+    return {
+      id: String(obj.id ?? ""),
+      name: String(obj.name ?? ""),
+      status: String(obj.status ?? ""),
     }
-  }
-
-  return events
+  })
 }
 
-function writeJsonl(outputPath: string, events: JestEvent[]): void {
-  const content = events.map((e) => JSON.stringify(e)).join("\n") + "\n"
+function toJsonlEvents(rows: JestReportRow[], timestampUtc: string): JestJsonlEvent[] {
+  return rows.map((row) => {
+    const { testPath, stableId } = parseId(row.id)
+
+    return {
+      test_id: stableId || hashId(`${testPath}::${row.name}`),
+      tool: "jest",
+      status: normalizeStatus(row.status),
+      timestamp_utc: timestampUtc,
+      test_name: row.name,
+      test_path: testPath,
+    }
+  })
+}
+
+function writeJsonl(outputPath: string, events: JestJsonlEvent[]): void {
   ensureParentDir(outputPath)
+  const content = events.map((e) => JSON.stringify(e)).join("\n") + "\n"
   fs.writeFileSync(outputPath, content, "utf8")
 }
 
@@ -181,10 +92,8 @@ function main(): void {
   const inputPath = process.argv[2] || DEFAULT_INPUT_PATH
   const outputPath = process.argv[3] || DEFAULT_OUTPUT_PATH
 
-  const timestampUtc = new Date().toISOString()
-  const report = parseJsonFile<JestJsonReport>(inputPath)
-  const suites = getSuites(report)
-  const events = buildEvents(suites, timestampUtc)
+  const rows = readReport(inputPath)
+  const events = toJsonlEvents(rows, new Date().toISOString())
 
   writeJsonl(outputPath, events)
 }

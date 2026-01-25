@@ -28,3 +28,17 @@ stage('Generate Tally Report') {
     }
   }
 }
+
+
+
+
+stage('Generate Metrics') {
+  steps {
+    script {
+      sh '''
+        set -e
+        node dist-tools/metrics/jsonlToProm.js
+      '''
+    }
+  }
+}

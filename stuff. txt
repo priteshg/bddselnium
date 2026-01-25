@@ -1,6 +1,0 @@
-Guiding Principles: Shifting Left and Right
-​Our quality culture is built on two core pillars that ensure reliability throughout the software life cycle.
-​Shift Left
-​We move quality activities to the earliest possible stage. This starts with the 3 Amigos process where Developers and SDETs and Product Owners scope scenarios together before a single line of code is written. By using Example Mapping we bake quality into the requirements. This also includes our commitment to unit testing and contract testing during the development phase.
-​Shift Right
-​Quality does not end at the point of release. We are currently releasing to an internal beta audience with a customer release date to be decided. We use monitoring and synthetic checks and real world feedback from our beta users to catch edge cases that only appear in a live environment. This ensures we continue to learn from the application behaviour in the wild.

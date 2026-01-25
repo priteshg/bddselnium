@@ -1,0 +1,127 @@
+import fs from "fs"
+import path from "path"
+
+type TestEvent = {
+  status?: string
+}
+
+type Totals = {
+  total: number
+  failed: number
+}
+
+const RESULTS_DIR_NAME = "test-results"
+const JEST_EVENTS_FILE = "jest-events.jsonl"
+const PLAYWRIGHT_EVENTS_FILE = "playwright-events.jsonl"
+const OUTPUT_METRICS_FILE = "test-stability.prom"
+
+function readFileIfPresent(filePath: string): string {
+  if (!fs.existsSync(filePath)) return ""
+  return fs.readFileSync(filePath, "utf8")
+}
+
+function parseJsonLine(line: string): TestEvent | null {
+  const trimmed = line.trim()
+  if (!trimmed) return null
+
+  try {
+    return JSON.parse(trimmed) as TestEvent
+  } catch {
+    return null
+  }
+}
+
+function readJsonlEvents(filePath: string): TestEvent[] {
+  const raw = readFileIfPresent(filePath)
+  if (!raw) return []
+
+  const events: TestEvent[] = []
+  for (const line of raw.split("\n")) {
+    const event = parseJsonLine(line)
+    if (event) events.push(event)
+  }
+
+  return events
+}
+
+function countTotals(events: TestEvent[]): Totals {
+  let total = 0
+  let failed = 0
+
+  for (const event of events) {
+    total += 1
+    if (event.status === "failed") failed += 1
+  }
+
+  return { total, failed }
+}
+
+function formatLabels(labels: Record<string, string>): string {
+  const keys = Object.keys(labels)
+  if (keys.length === 0) return ""
+
+  const parts: string[] = []
+  for (const key of keys) {
+    parts.push(`${key}="${labels[key]}"`)
+  }
+
+  return `{${parts.join(",")}}`
+}
+
+function formatMetricLine(metricName: string, labels: Record<string, string>, value: number): string {
+  return `${metricName}${formatLabels(labels)} ${value}`
+}
+
+function writeMetricsFile(outputPath: string, lines: string[]): void {
+  fs.mkdirSync(path.dirname(outputPath), { recursive: true })
+  fs.writeFileSync(outputPath, lines.join("\n") + "\n", "utf8")
+}
+
+function buildPaths(): { jestJsonl: string; playwrightJsonl: string; outputProm: string } {
+  const resultsDir = path.join(process.cwd(), RESULTS_DIR_NAME)
+  return {
+    jestJsonl: path.join(resultsDir, JEST_EVENTS_FILE),
+    playwrightJsonl: path.join(resultsDir, PLAYWRIGHT_EVENTS_FILE),
+    outputProm: path.join(resultsDir, OUTPUT_METRICS_FILE),
+  }
+}
+
+function parseExitCode(envValue: string | undefined): number | null {
+  if (envValue === undefined) return null
+  const n = Number(envValue)
+  return Number.isFinite(n) ? n : null
+}
+
+function buildFailedFlag(exitCode: number | null, failedCount: number): number {
+  if (exitCode === null) return failedCount > 0 ? 1 : 0
+  return exitCode === 0 ? 0 : 1
+}
+
+function main(): void {
+  const paths = buildPaths()
+
+  const jestEvents = readJsonlEvents(paths.jestJsonl)
+  const playwrightEvents = readJsonlEvents(paths.playwrightJsonl)
+
+  const jestTotals = countTotals(jestEvents)
+  const playwrightTotals = countTotals(playwrightEvents)
+
+  const jestExitCode = parseExitCode(process.env.JEST_EXIT_CODE)
+  const playwrightExitCode = parseExitCode(process.env.PLAYWRIGHT_EXIT_CODE)
+
+  const jestBuildFailed = buildFailedFlag(jestExitCode, jestTotals.failed)
+  const playwrightBuildFailed = buildFailedFlag(playwrightExitCode, playwrightTotals.failed)
+
+  const lines: string[] = []
+  lines.push(formatMetricLine("test_stability_tests_total", { tool: "jest" }, jestTotals.total))
+  lines.push(formatMetricLine("test_stability_tests_failed_total", { tool: "jest" }, jestTotals.failed))
+  lines.push(formatMetricLine("test_stability_build_failed", { tool: "jest" }, jestBuildFailed))
+
+  lines.push(formatMetricLine("test_stability_tests_total", { tool: "playwright" }, playwrightTotals.total))
+  lines.push(formatMetricLine("test_stability_tests_failed_total", { tool: "playwright" }, playwrightTotals.failed))
+  lines.push(formatMetricLine("test_stability_build_failed", { tool: "playwright" }, playwrightBuildFailed))
+
+  writeMetricsFile(paths.outputProm, lines)
+}
+
+main()

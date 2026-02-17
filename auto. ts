@@ -1,14 +1,19 @@
 async function resetRenderer(grApp: GlobalRelayApp) {
-  // This is the true DevTools-equivalent reload
   await grApp.electronApp.evaluate(({ BrowserWindow }) => {
-    const win = BrowserWindow.getAllWindows()[0];
-    win.webContents.reload();
+    const windows = BrowserWindow.getAllWindows();
+    for (const win of windows) {
+      win.close();
+    }
   });
 
-  const page = grApp.frame.page();
+  // wait for the app to recreate its window
+  const page = await grApp.electronApp.waitForEvent('window');
 
   await page.waitForLoadState('domcontentloaded');
   await page.waitForSelector('[data-testid="my-archive-root"]', {
     state: 'visible',
   });
+
+  // IMPORTANT: update grApp.frame if you cache it
+  grApp.frame = page.frameLocator('iframe'); // adjust to your app
 }

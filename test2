@@ -1,38 +1,85 @@
 import { test as base } from 'playwright-bdd';
 import type { Page } from '@playwright/test';
-import { xxx , xxx } from '../utils/setup';
-import { AppControl } from '../pages';
+import { xxx, xxx } from '../utils/setup';
+import {
+  AppControl,
+  Filters,
+  Message,
+  MessageList,
+  Search,
+  SearchCriteriaModal,
+  GarageDoor,
+} from '../pages';
+import type { UserCredentials } from '../pages/login';
+import { MyArchive } from '../pages/myArchive';
 
 type Fixtures = {
-  grApp: GlobalRelayApp;
+  credentials: UserCredentials;
+
+  grApp: xxx;
+
+  myArchive: MyArchive;
+  filters: Filters;
+  message: Message;
+  messageList: MessageList;
+  search: Search;
+  searchCriteriaModal: SearchCriteriaModal;
+  garageDoor: GarageDoor;
+
   resetApp: void;
+  teardown: void;
 };
 
 export const test = base.extend<Fixtures>({
-  // 1) Launch once per worker
+  // keep your existing credentials fixture or import it from where it lives today
+  credentials: async ({}, use) => {
+    await use({} as UserCredentials);
+  },
+
+  // change: worker scope
   grApp: [
     async ({ credentials }, use, testInfo) => {
       const grApp = await loadGlobalRelayApp(0, credentials, testInfo);
-
-      // Do one-time “landing” navigation once here if you want
       await new AppControl(grApp.frame).selectMyArchive();
 
       await use(grApp);
 
-      // Optional: close app when worker finishes
-      await grApp.electronApp?.close();
+      await grApp.electronApp.close();
     },
     { scope: 'worker' },
   ],
 
-  // 2) Reset before each test
+  // new: per test reset
   resetApp: async ({ grApp }, use) => {
     const page = await grApp.electronApp.firstWindow();
     await resetRenderer(page);
     await use();
   },
 
-  // 3) Keep teardown for artifacts only, no reload
+  // keep existing page object fixtures
+  myArchive: async ({ grApp }, use) => {
+    await use(new MyArchive(grApp.frame));
+  },
+  filters: async ({ grApp }, use) => {
+    await use(new Filters(grApp.frame));
+  },
+  message: async ({ grApp }, use) => {
+    await use(new Message(grApp.frame));
+  },
+  messageList: async ({ grApp }, use) => {
+    await use(new MessageList(grApp.frame));
+  },
+  search: async ({ grApp }, use) => {
+    await use(new Search(grApp.frame));
+  },
+  searchCriteriaModal: async ({ grApp }, use) => {
+    await use(new SearchCriteriaModal(grApp.frame));
+  },
+  garageDoor: async ({ grApp }, use) => {
+    await use(new GarageDoor(grApp.frame));
+  },
+
+  // keep teardown, no reload in here
   teardown: async ({ grApp }, use, testInfo) => {
     await use();
 
@@ -41,13 +88,13 @@ export const test = base.extend<Fixtures>({
         path: `./test-results/${testInfo.title}.png`,
         fullPage: true,
       });
-      // keep your video rename logic here
+      // keep your video rename, diff copy, etc here
     }
   },
 });
 
 async function resetRenderer(page: Page) {
-  // optional, only if state leaks between tests
+  // optional
   await page.evaluate(() => {
     localStorage.clear();
     sessionStorage.clear();
@@ -55,6 +102,6 @@ async function resetRenderer(page: Page) {
 
   await page.reload({ waitUntil: 'domcontentloaded' });
 
-  // replace with a stable selector in your app
+  // pick a selector that proves the app is usable
   await page.waitForSelector('[data-testid="my-archive-root"]', { state: 'visible' });
 }

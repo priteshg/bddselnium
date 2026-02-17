@@ -1,19 +1,56 @@
-async function resetRenderer(grApp: GlobalRelayApp) {
-  await grApp.electronApp.evaluate(({ BrowserWindow }) => {
-    const windows = BrowserWindow.getAllWindows();
-    for (const win of windows) {
-      win.close();
-    }
-  });
+import { test as base } from 'playwright-bdd';
+import type { GlobalRelayApp } from '../utils/setup';
+import { loadGlobalRelayApp } from '../utils/setup';
+import type { UserCredentials } from '../pages/login';
+import { AppControl, Filters, Message, MessageList, Search, SearchCriteriaModal, GarageDoor } from '../pages';
+import { MyArchive } from '../pages/myArchive';
 
-  // wait for the app to recreate its window
-  const page = await grApp.electronApp.waitForEvent('window');
+type Fixtures = {
+  credentials: UserCredentials;
+  grApp: GlobalRelayApp;
 
-  await page.waitForLoadState('domcontentloaded');
-  await page.waitForSelector('[data-testid="my-archive-root"]', {
-    state: 'visible',
-  });
+  myArchive: MyArchive;
+  filters: Filters;
+  message: Message;
+  messageList: MessageList;
+  search: Search;
+  searchCriteriaModal: SearchCriteriaModal;
+  garageDoor: GarageDoor;
+};
 
-  // IMPORTANT: update grApp.frame if you cache it
-  grApp.frame = page.frameLocator('iframe'); // adjust to your app
-}
+export const test = base.extend<Fixtures>({
+  credentials: async ({}, use) => {
+    await use({} as UserCredentials);
+  },
+
+  grApp: async ({ credentials }, use, testInfo) => {
+    const grApp = await loadGlobalRelayApp(0, credentials, testInfo);
+    await new AppControl(grApp.frame).selectMyArchive();
+
+    await use(grApp);
+
+    await grApp.electronApp.close();
+  },
+
+  myArchive: async ({ grApp }, use) => {
+    await use(new MyArchive(grApp.frame));
+  },
+  filters: async ({ grApp }, use) => {
+    await use(new Filters(grApp.frame));
+  },
+  message: async ({ grApp }, use) => {
+    await use(new Message(grApp.frame));
+  },
+  messageList: async ({ grApp }, use) => {
+    await use(new MessageList(grApp.frame));
+  },
+  search: async ({ grApp }, use) => {
+    await use(new Search(grApp.frame));
+  },
+  searchCriteriaModal: async ({ grApp }, use) => {
+    await use(new SearchCriteriaModal(grApp.frame));
+  },
+  garageDoor: async ({ grApp }, use) => {
+    await use(new GarageDoor(grApp.frame));
+  },
+});

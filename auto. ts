@@ -1,5 +1,17 @@
-resetApp: [async ({ grApp }, use) => {
-  const page = await grApp.electronApp.firstWindow();
-  await resetRenderer(page);
-  await use();
-}, { auto: true }],
+async function resetRenderer(page: Page) {
+  // Trigger the same reload as DevTools console
+  await page.evaluate(() => {
+    window.location.reload();
+  });
+
+  // Wait for the document to be rebuilt
+  await page.waitForLoadState('domcontentloaded');
+
+  // Wait for something real in your UI that proves the app is usable
+  await page.waitForSelector('[data-testid="my-archive-root"]', {
+    state: 'visible',
+  });
+
+  // Optional settle if your app fires late async work
+  await page.waitForLoadState('networkidle');
+}

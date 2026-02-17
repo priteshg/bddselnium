@@ -1,0 +1,60 @@
+import { test as base } from 'playwright-bdd';
+import type { Page } from '@playwright/test';
+import { xxx , xxx } from '../utils/setup';
+import { AppControl } from '../pages';
+
+type Fixtures = {
+  grApp: GlobalRelayApp;
+  resetApp: void;
+};
+
+export const test = base.extend<Fixtures>({
+  // 1) Launch once per worker
+  grApp: [
+    async ({ credentials }, use, testInfo) => {
+      const grApp = await loadGlobalRelayApp(0, credentials, testInfo);
+
+      // Do one-time “landing” navigation once here if you want
+      await new AppControl(grApp.frame).selectMyArchive();
+
+      await use(grApp);
+
+      // Optional: close app when worker finishes
+      await grApp.electronApp?.close();
+    },
+    { scope: 'worker' },
+  ],
+
+  // 2) Reset before each test
+  resetApp: async ({ grApp }, use) => {
+    const page = await grApp.electronApp.firstWindow();
+    await resetRenderer(page);
+    await use();
+  },
+
+  // 3) Keep teardown for artifacts only, no reload
+  teardown: async ({ grApp }, use, testInfo) => {
+    await use();
+
+    if (testInfo.status !== testInfo.expectedStatus) {
+      await grApp.frame.page().screenshot({
+        path: `./test-results/${testInfo.title}.png`,
+        fullPage: true,
+      });
+      // keep your video rename logic here
+    }
+  },
+});
+
+async function resetRenderer(page: Page) {
+  // optional, only if state leaks between tests
+  await page.evaluate(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+
+  // replace with a stable selector in your app
+  await page.waitForSelector('[data-testid="my-archive-root"]', { state: 'visible' });
+}

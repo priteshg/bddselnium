@@ -1,0 +1,5 @@
+resetApp: [async ({ grApp }, use) => {
+  const page = await grApp.electronApp.firstWindow();
+  await resetRenderer(page);
+  await use();
+}, { auto: true }],

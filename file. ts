@@ -1,0 +1,140 @@
+import { test as base } from 'playwright-bdd';
+import type { Page } from '@playwright/test';
+
+import type { GlobalRelayApp } from '../utils/setup';
+import { loadGlobalRelayApp } from '../utils/setup';
+
+import type { UserCredentials } from '../pages/login';
+import { MyArchive } from '../pages/myArchive';
+
+import {
+  AppControl,
+  Filters,
+  Message,
+  MessageList,
+  Search,
+  SearchCriteriaModal,
+  GarageDoor,
+} from '../pages';
+
+type Fixtures = {
+  credentials: UserCredentials;
+
+  grApp: GlobalRelayApp;
+
+  myArchive: MyArchive;
+  filters: Filters;
+  message: Message;
+  messageList: MessageList;
+  search: Search;
+  searchCriteriaModal: SearchCriteriaModal;
+  garageDoor: GarageDoor;
+
+  resetApp: void;
+  teardown: void;
+};
+
+let singletonApp: GlobalRelayApp | undefined;
+let starting: Promise<GlobalRelayApp> | undefined;
+let didLandingNav = false;
+
+async function getOrStartApp(credentials: UserCredentials, testInfo: any) {
+  if (singletonApp) return singletonApp;
+
+  if (!starting) {
+    starting = loadGlobalRelayApp(0, credentials, testInfo).then(app => {
+      singletonApp = app;
+      return app;
+    });
+  }
+
+  return starting;
+}
+
+export const test = base.extend<Fixtures>({
+  // Keep your existing credentials fixture logic here.
+  // If you already have credentials elsewhere, remove this and import/extend from that instead.
+  credentials: async ({}, use) => {
+    await use({} as UserCredentials);
+  },
+
+  // Reuse the same Electron app for the whole run (single worker recommended)
+  grApp: async ({ credentials }, use, testInfo) => {
+    const grApp = await getOrStartApp(credentials, testInfo);
+
+    // Do this once only
+    if (!didLandingNav) {
+      await new AppControl(grApp.frame).selectMyArchive();
+      didLandingNav = true;
+    }
+
+    await use(grApp);
+  },
+
+  // Auto reset before every test
+  resetApp: [
+    async ({ grApp }, use) => {
+      const page = await grApp.electronApp.firstWindow();
+      await resetRenderer(page);
+      await use();
+    },
+    { auto: true },
+  ],
+
+  myArchive: async ({ grApp }, use) => {
+    await use(new MyArchive(grApp.frame));
+  },
+  filters: async ({ grApp }, use) => {
+    await use(new Filters(grApp.frame));
+  },
+  message: async ({ grApp }, use) => {
+    await use(new Message(grApp.frame));
+  },
+  messageList: async ({ grApp }, use) => {
+    await use(new MessageList(grApp.frame));
+  },
+  search: async ({ grApp }, use) => {
+    await use(new Search(grApp.frame));
+  },
+  searchCriteriaModal: async ({ grApp }, use) => {
+    await use(new SearchCriteriaModal(grApp.frame));
+  },
+  garageDoor: async ({ grApp }, use) => {
+    await use(new GarageDoor(grApp.frame));
+  },
+
+  teardown: async ({ grApp }, use, testInfo) => {
+    await use();
+
+    if (testInfo.status !== testInfo.expectedStatus) {
+      await grApp.frame.page().screenshot({
+        path: `./test-results/${testInfo.title}.png`,
+        fullPage: true,
+      });
+
+      // Keep your existing video rename, diff copy, etc here.
+      // Do NOT reload here anymore.
+    }
+  },
+});
+
+async function resetRenderer(page: Page) {
+  await page.evaluate(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+
+  // Replace with a selector that is stable and proves your app is ready.
+  await page.waitForSelector('[data-testid="my-archive-root"]', { state: 'visible' });
+}
+
+// Optional helper you can call from a global teardown script if you have one.
+export async function closeElectronOnce() {
+  if (!singletonApp) return;
+  await singletonApp.electronApp.close();
+  singletonApp = undefined;
+  starting = undefined;
+  didLandingNav = false;
+}

@@ -1,6 +1,6 @@
 import { test as base } from 'playwright-bdd';
 import { electron, type ElectronApplication, type Page } from '@playwright/test';
-import { GlobalRelayApp, loadGlobalRelayApp } from '../utils/setup';
+import { XXXX, XXX } from '../utils/setup';
 
 type Fixtures = {
   grApp: GlobalRelayApp;

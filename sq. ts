@@ -1,13 +1,8 @@
 if (options.waitForResults) {
-  await this.frame.page().waitForFunction(
-    async ([header, empty]) => {
-      if (await header.isVisible().catch(() => false)) return true;
-      return (await empty.count().catch(() => 0)) > 0;
-    },
-    [
-      this.getByTestId('message-header'),
-      this.getByTestId('empty-state-sub-title'),
-    ],
+  await expect.poll(
+    async () =>
+      (await this.frame.getByTestId('message-header').count()) > 0 ||
+      (await this.frame.getByTestId('empty-state-sub-title').count()) > 0,
     { timeout: 15000 }
-  );
+  ).toBe(true);
 }

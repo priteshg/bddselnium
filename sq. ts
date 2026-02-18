@@ -1,0 +1,13 @@
+if (options.waitForResults) {
+  await this.frame.page().waitForFunction(
+    async ([header, empty]) => {
+      if (await header.isVisible().catch(() => false)) return true;
+      return (await empty.count().catch(() => 0)) > 0;
+    },
+    [
+      this.getByTestId('message-header'),
+      this.getByTestId('empty-state-sub-title'),
+    ],
+    { timeout: 15000 }
+  );
+}

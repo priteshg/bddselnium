@@ -1,3 +1,9 @@
+// Pattern used in this file
+// 1. A single shared soak runner that owns all timing logic.
+// 2. Each scenario is a small function that plugs into the shared runner.
+// 3. A scenario registry (a Record) maps a scenario name string to the scenario function.
+// 4. The step picks the scenario function from the registry and runs it.
+
 type SoakTestContext = {
   search: Search;
   searchCriteriaModal: SearchCriteriaModal;
@@ -5,8 +11,15 @@ type SoakTestContext = {
   messageList: MessageList;
   message: Message;
 };
+// Note
+// This is a plain TypeScript type. It describes the shape of the object Playwright BDD gives your step.
+// When you type your step context, you get autocomplete and compile time checks.
 
 type SoakScenario = (ctx: SoakTestContext, durationHours: number) => Promise<void>;
+// Note
+// This is a function type alias.
+// Any function assigned to SoakScenario must accept (ctx, durationHours) and return a Promise.
+// This is how we keep all scenarios consistent.
 
 const MS_PER_MINUTE = 60_000;
 const MS_PER_HOUR = 60 * MS_PER_MINUTE;
@@ -15,10 +28,16 @@ const ACTIVE_WINDOW_MS = 30 * MS_PER_MINUTE;
 const IDLE_MINUTES = 5;
 
 function nowMs(): number {
+  // Note
+  // Small wrapper around Date.now so timing reads clearly and is easy to replace in tests if needed.
   return Date.now();
 }
 
 function idle(search: Search): Promise<void> {
+  // Note
+  // This is an adapter function.
+  // Our soak runner wants "a function that waits".
+  // Your existing helper is waitForMinutes(search, minutes), so this wraps it in a nicer name.
   return waitForMinutes(search, IDLE_MINUTES);
 }
 
@@ -28,6 +47,15 @@ async function runSoakWindows(args: {
   runIteration: () => Promise<void>;
   idleBetweenWindows: () => Promise<void>;
 }): Promise<void> {
+  // Pattern note
+  // This is the shared soak runner.
+  // It implements the Template Method pattern in a simple TS style.
+  // The "template" is the loop and timing.
+  // The "pluggable parts" are callbacks:
+  // - beforeWindow: optional setup before each active window
+  // - idleBetweenWindows: the cool down / idle pause
+  // - runIteration: one unit of work repeated during the active window
+
   const endTimeMs = nowMs() + args.durationHours * MS_PER_HOUR;
 
   while (nowMs() < endTimeMs) {
@@ -42,12 +70,15 @@ async function runSoakWindows(args: {
   }
 }
 
-/* ---------------- Scenarios ---------------- */
+/* ---------------- Scenario functions ---------------- */
 
 async function scenarioOpenAndCloseSearchCriteriaModal(
   { search, searchCriteriaModal }: SoakTestContext,
   durationHours: number
 ): Promise<void> {
+  // Note
+  // This scenario does not need search setup.
+  // It plugs a single iteration function into the shared runner.
   await runSoakWindows({
     durationHours,
     idleBetweenWindows: () => idle(search),
@@ -59,6 +90,9 @@ async function scenarioSwitchMessagesInList(
   { search, searchCriteriaModal, filters, messageList, message }: SoakTestContext,
   durationHours: number
 ): Promise<void> {
+  // Note
+  // This scenario needs a one time setup before the soak loop starts.
+  // After setup, it runs one iteration repeatedly.
   await searchForOnlyEmail(filters, searchCriteriaModal, search);
 
   await runSoakWindows({
@@ -72,6 +106,8 @@ async function scenarioSwitchAIMessageOptions(
   { search, searchCriteriaModal, filters, message }: SoakTestContext,
   durationHours: number
 ): Promise<void> {
+  // Note
+  // Same structure: one time setup, then a repeated iteration.
   await searchForOnlyEmail(filters, searchCriteriaModal, search);
 
   await runSoakWindows({
@@ -85,6 +121,9 @@ async function scenarioGenerateSummariesWithDifferentLengths(
   { search, searchCriteriaModal, filters, message }: SoakTestContext,
   durationHours: number
 ): Promise<void> {
+  // Note
+  // Uses beforeWindow to enforce the UI state once per active window.
+  // This avoids doing extra navigation inside every iteration.
   await searchForOnlyEmail(filters, searchCriteriaModal, search);
 
   await runSoakWindows({
@@ -99,6 +138,9 @@ async function scenarioNavigateFirstAndLastMessage(
   { search, searchCriteriaModal, filters, message, messageList }: SoakTestContext,
   durationHours: number
 ): Promise<void> {
+  // Note
+  // One iteration can be multiple actions.
+  // This keeps the runner generic and the scenario readable.
   await searchForOnlyEmail(filters, searchCriteriaModal, search);
 
   await runSoakWindows({
@@ -111,9 +153,20 @@ async function scenarioNavigateFirstAndLastMessage(
   });
 }
 
-/* ---------------- Registry ---------------- */
+/* ---------------- Scenario registry ---------------- */
 
 const soakScenarios: Record<string, SoakScenario> = {
+  // What is Record
+  // Record<K, V> is a built in TypeScript utility type.
+  // It describes an object whose keys are type K and values are type V.
+  //
+  // Here:
+  // - K is string (scenario name)
+  // - V is SoakScenario (a function)
+  //
+  // So this object is a lookup table:
+  // soakScenarios["OpenAndCloseSCM"] returns a function you can call.
+
   OpenAndCloseSCM: scenarioOpenAndCloseSearchCriteriaModal,
   SwitchBetweenMessagesInMessageList: scenarioSwitchMessagesInList,
   SwitchBetweenAIMessageOptions: scenarioSwitchAIMessageOptions,
@@ -126,10 +179,21 @@ const soakScenarios: Record<string, SoakScenario> = {
 Given(
   /^I start the (.+) soak test for (\d+(?:\.\d+)?) hrs$/,
   async (ctx: SoakTestContext, scenarioName: string, hoursRaw: string) => {
+    // Note
+    // The step does 3 things only:
+    // 1. Starts snapshots.
+    // 2. Looks up the scenario function by name and calls it.
+    // 3. Always stops snapshots in finally, even if the test fails.
+
     startSnapshots();
     try {
       const durationHours = Number(hoursRaw);
+
       const scenario = soakScenarios[scenarioName];
+      // Note
+      // This is how the registry "has the function".
+      // scenario is now a function (SoakScenario), pulled from the object by key.
+      // You then call it like any other function: await scenario(ctx, durationHours).
 
       if (!scenario) {
         throw new Error(`Unknown soak scenario: ${scenarioName}`);

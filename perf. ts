@@ -1,4 +1,4 @@
-type SoakContext = {
+type SoakTestContext = {
   search: Search;
   searchCriteriaModal: SearchCriteriaModal;
   filters: Filters;
@@ -6,117 +6,136 @@ type SoakContext = {
   message: Message;
 };
 
-type SoakHandler = (ctx: SoakContext, hours: number) => Promise<void>;
+type SoakScenario = (ctx: SoakTestContext, durationHours: number) => Promise<void>;
 
-const MS_PER_MIN = 60_000;
-const MS_PER_HOUR = 60 * MS_PER_MIN;
+const MS_PER_MINUTE = 60_000;
+const MS_PER_HOUR = 60 * MS_PER_MINUTE;
 
-const ACTIVE_MS = 30 * MS_PER_MIN;
-const IDLE_TIME_MINS = 5;
+const ACTIVE_WINDOW_MS = 30 * MS_PER_MINUTE;
+const IDLE_MINUTES = 5;
 
-function now(): number {
+function nowMs(): number {
   return Date.now();
 }
 
-async function runSoak(
-  hours: number,
-  idle: () => Promise<void>,
-  action: () => Promise<void>,
-  beforeActive?: () => Promise<void>
-): Promise<void> {
-  const end = now() + hours * MS_PER_HOUR;
+function idle(search: Search): Promise<void> {
+  return waitForMinutes(search, IDLE_MINUTES);
+}
 
-  while (now() < end) {
-    const activeEnd = now() + ACTIVE_MS;
+async function runSoakWindows(args: {
+  durationHours: number;
+  beforeWindow?: () => Promise<void>;
+  runIteration: () => Promise<void>;
+  idleBetweenWindows: () => Promise<void>;
+}): Promise<void> {
+  const endTimeMs = nowMs() + args.durationHours * MS_PER_HOUR;
 
-    if (beforeActive) await beforeActive();
-    await idle();
+  while (nowMs() < endTimeMs) {
+    const windowEndMs = nowMs() + ACTIVE_WINDOW_MS;
 
-    while (now() < activeEnd && now() < end) {
-      await action();
+    if (args.beforeWindow) await args.beforeWindow();
+    await args.idleBetweenWindows();
+
+    while (nowMs() < windowEndMs && nowMs() < endTimeMs) {
+      await args.runIteration();
     }
   }
 }
 
-const scenarios: Record<string, SoakHandler> = {
-  OpenAndCloseSCM: async ({ search, searchCriteriaModal }, hours) => {
-    await runSoak(
-      hours,
-      () => waitForMinutes(search, IDLE_TIME_MINS),
-      () => openAndCloseSCM(searchCriteriaModal)
-    );
-  },
+/* ---------------- Scenarios ---------------- */
 
-  SwitchBetweenMessagesInMessageList: async (
-    { search, searchCriteriaModal, filters, messageList, message },
-    hours
-  ) => {
-    await searchForOnlyEmail(filters, searchCriteriaModal, search);
+async function scenarioOpenAndCloseSearchCriteriaModal(
+  { search, searchCriteriaModal }: SoakTestContext,
+  durationHours: number
+): Promise<void> {
+  await runSoakWindows({
+    durationHours,
+    idleBetweenWindows: () => idle(search),
+    runIteration: () => openAndCloseSCM(searchCriteriaModal),
+  });
+}
 
-    await runSoak(
-      hours,
-      () => waitForMinutes(search, IDLE_TIME_MINS),
-      () => switchBetweenMessagesInMessageList(messageList, message)
-    );
-  },
+async function scenarioSwitchMessagesInList(
+  { search, searchCriteriaModal, filters, messageList, message }: SoakTestContext,
+  durationHours: number
+): Promise<void> {
+  await searchForOnlyEmail(filters, searchCriteriaModal, search);
 
-  SwitchBetweenAIMessageOptions: async (
-    { search, searchCriteriaModal, filters, message },
-    hours
-  ) => {
-    await searchForOnlyEmail(filters, searchCriteriaModal, search);
+  await runSoakWindows({
+    durationHours,
+    idleBetweenWindows: () => idle(search),
+    runIteration: () => switchBetweenMessagesInMessageList(messageList, message),
+  });
+}
 
-    await runSoak(
-      hours,
-      () => waitForMinutes(search, IDLE_TIME_MINS),
-      () => switchBetweenAIMessageOptions(message)
-    );
-  },
+async function scenarioSwitchAIMessageOptions(
+  { search, searchCriteriaModal, filters, message }: SoakTestContext,
+  durationHours: number
+): Promise<void> {
+  await searchForOnlyEmail(filters, searchCriteriaModal, search);
 
-  SwitchMessageTopicLengthsAndGenerate: async (
-    { search, searchCriteriaModal, filters, message },
-    hours
-  ) => {
-    await searchForOnlyEmail(filters, searchCriteriaModal, search);
+  await runSoakWindows({
+    durationHours,
+    idleBetweenWindows: () => idle(search),
+    runIteration: () => switchBetweenAIMessageOptions(message),
+  });
+}
 
-    await runSoak(
-      hours,
-      () => waitForMinutes(search, IDLE_TIME_MINS),
-      () => switchMessageTopicLengthsAndGenerate(message),
-      () => selectNavBarOption(message, "Message summary")
-    );
-  },
+async function scenarioGenerateSummariesWithDifferentLengths(
+  { search, searchCriteriaModal, filters, message }: SoakTestContext,
+  durationHours: number
+): Promise<void> {
+  await searchForOnlyEmail(filters, searchCriteriaModal, search);
 
-  NavigateMessages: async (
-    { search, searchCriteriaModal, filters, message, messageList },
-    hours
-  ) => {
-    await searchForOnlyEmail(filters, searchCriteriaModal, search);
+  await runSoakWindows({
+    durationHours,
+    idleBetweenWindows: () => idle(search),
+    beforeWindow: () => selectNavBarOption(message, "Message summary"),
+    runIteration: () => switchMessageTopicLengthsAndGenerate(message),
+  });
+}
 
-    await runSoak(
-      hours,
-      () => waitForMinutes(search, IDLE_TIME_MINS),
-      async () => {
-        await navigateToLastMessage(message, messageList);
-        await navigateToFirstMessage(message, messageList);
-      }
-    );
-  },
+async function scenarioNavigateFirstAndLastMessage(
+  { search, searchCriteriaModal, filters, message, messageList }: SoakTestContext,
+  durationHours: number
+): Promise<void> {
+  await searchForOnlyEmail(filters, searchCriteriaModal, search);
+
+  await runSoakWindows({
+    durationHours,
+    idleBetweenWindows: () => idle(search),
+    runIteration: async () => {
+      await navigateToLastMessage(message, messageList);
+      await navigateToFirstMessage(message, messageList);
+    },
+  });
+}
+
+/* ---------------- Registry ---------------- */
+
+const soakScenarios: Record<string, SoakScenario> = {
+  OpenAndCloseSCM: scenarioOpenAndCloseSearchCriteriaModal,
+  SwitchBetweenMessagesInMessageList: scenarioSwitchMessagesInList,
+  SwitchBetweenAIMessageOptions: scenarioSwitchAIMessageOptions,
+  SwitchMessageTopicLengthsAndGenerate: scenarioGenerateSummariesWithDifferentLengths,
+  NavigateMessages: scenarioNavigateFirstAndLastMessage,
 };
+
+/* ---------------- Step ---------------- */
 
 Given(
   /^I start the (.+) soak test for (\d+(?:\.\d+)?) hrs$/,
-  async (ctx: SoakContext, scenario: string, hoursRaw: string) => {
+  async (ctx: SoakTestContext, scenarioName: string, hoursRaw: string) => {
     startSnapshots();
     try {
-      const hours = Number(hoursRaw);
-      const handler = scenarios[scenario];
+      const durationHours = Number(hoursRaw);
+      const scenario = soakScenarios[scenarioName];
 
-      if (!handler) {
-        throw new Error(`Unknown soak scenario: ${scenario}`);
+      if (!scenario) {
+        throw new Error(`Unknown soak scenario: ${scenarioName}`);
       }
 
-      await handler(ctx, hours);
+      await scenario(ctx, durationHours);
     } finally {
       stopSnapshots();
     }

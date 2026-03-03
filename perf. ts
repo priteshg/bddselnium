@@ -6,15 +6,7 @@ type SoakContext = {
   message: Message;
 };
 
-type SoakHandler = (ctx: SoakContext, hoursToRun: number) => Promise<void>;
-
-type SoakLoopArgs = {
-  hoursToRun: number;
-  activeMs: number;
-  idle: () => Promise<void>;
-  beforeActiveWindow?: () => Promise<void>;
-  action: () => Promise<void>;
-};
+type SoakHandler = (ctx: SoakContext, hours: number) => Promise<void>;
 
 const MS_PER_MIN = 60_000;
 const MS_PER_HOUR = 60 * MS_PER_MIN;
@@ -22,131 +14,109 @@ const MS_PER_HOUR = 60 * MS_PER_MIN;
 const ACTIVE_MS = 30 * MS_PER_MIN;
 const IDLE_TIME_MINS = 5;
 
-function nowMs(): number {
+function now(): number {
   return Date.now();
 }
 
-function toEndMs(hoursToRun: number): number {
-  return nowMs() + Math.max(0, hoursToRun) * MS_PER_HOUR;
-}
+async function runSoak(
+  hours: number,
+  idle: () => Promise<void>,
+  action: () => Promise<void>,
+  beforeActive?: () => Promise<void>
+): Promise<void> {
+  const end = now() + hours * MS_PER_HOUR;
 
-async function runSoakLoop(args: SoakLoopArgs): Promise<void> {
-  const endMs = toEndMs(args.hoursToRun);
+  while (now() < end) {
+    const activeEnd = now() + ACTIVE_MS;
 
-  while (nowMs() < endMs) {
-    const windowEndMs = nowMs() + args.activeMs;
+    if (beforeActive) await beforeActive();
+    await idle();
 
-    if (args.beforeActiveWindow) await args.beforeActiveWindow();
-    await args.idle();
-
-    while (nowMs() < windowEndMs && nowMs() < endMs) {
-      await args.action();
+    while (now() < activeEnd && now() < end) {
+      await action();
     }
   }
 }
 
-function idleFn(search: Search): () => Promise<void> {
-  return async () => waitForMinutes(search, IDLE_TIME_MINS);
-}
+const scenarios: Record<string, SoakHandler> = {
+  OpenAndCloseSCM: async ({ search, searchCriteriaModal }, hours) => {
+    await runSoak(
+      hours,
+      () => waitForMinutes(search, IDLE_TIME_MINS),
+      () => openAndCloseSCM(searchCriteriaModal)
+    );
+  },
 
-function scenarioOpenAndCloseSCM(): SoakHandler {
-  return async ({ search, searchCriteriaModal }, hoursToRun) =>
-    runSoakLoop({
-      hoursToRun,
-      activeMs: ACTIVE_MS,
-      idle: idleFn(search),
-      action: async () => openAndCloseSCM(searchCriteriaModal),
-    });
-}
-
-function scenarioSwitchBetweenMessagesInMessageList(): SoakHandler {
-  return async ({ search, searchCriteriaModal, filters, messageList, message }, hoursToRun) => {
+  SwitchBetweenMessagesInMessageList: async (
+    { search, searchCriteriaModal, filters, messageList, message },
+    hours
+  ) => {
     await searchForOnlyEmail(filters, searchCriteriaModal, search);
 
-    await runSoakLoop({
-      hoursToRun,
-      activeMs: ACTIVE_MS,
-      idle: idleFn(search),
-      action: async () => switchBetweenMessagesInMessageList(messageList, message),
-    });
-  };
-}
+    await runSoak(
+      hours,
+      () => waitForMinutes(search, IDLE_TIME_MINS),
+      () => switchBetweenMessagesInMessageList(messageList, message)
+    );
+  },
 
-function scenarioSwitchBetweenAIMessageOptions(): SoakHandler {
-  return async ({ search, searchCriteriaModal, filters, message }, hoursToRun) => {
+  SwitchBetweenAIMessageOptions: async (
+    { search, searchCriteriaModal, filters, message },
+    hours
+  ) => {
     await searchForOnlyEmail(filters, searchCriteriaModal, search);
 
-    await runSoakLoop({
-      hoursToRun,
-      activeMs: ACTIVE_MS,
-      idle: idleFn(search),
-      action: async () => switchBetweenAIMessageOptions(message),
-    });
-  };
-}
+    await runSoak(
+      hours,
+      () => waitForMinutes(search, IDLE_TIME_MINS),
+      () => switchBetweenAIMessageOptions(message)
+    );
+  },
 
-function scenarioSwitchMessageTopicLengthsAndGenerate(): SoakHandler {
-  return async ({ search, searchCriteriaModal, filters, message }, hoursToRun) => {
+  SwitchMessageTopicLengthsAndGenerate: async (
+    { search, searchCriteriaModal, filters, message },
+    hours
+  ) => {
     await searchForOnlyEmail(filters, searchCriteriaModal, search);
 
-    await runSoakLoop({
-      hoursToRun,
-      activeMs: ACTIVE_MS,
-      idle: idleFn(search),
-      beforeActiveWindow: async () => selectNavBarOption(message, "Message summary"),
-      action: async () => switchMessageTopicLengthsAndGenerate(message),
-    });
-  };
-}
+    await runSoak(
+      hours,
+      () => waitForMinutes(search, IDLE_TIME_MINS),
+      () => switchMessageTopicLengthsAndGenerate(message),
+      () => selectNavBarOption(message, "Message summary")
+    );
+  },
 
-function scenarioNavigateMessages(): SoakHandler {
-  return async ({ search, searchCriteriaModal, filters, message, messageList }, hoursToRun) => {
+  NavigateMessages: async (
+    { search, searchCriteriaModal, filters, message, messageList },
+    hours
+  ) => {
     await searchForOnlyEmail(filters, searchCriteriaModal, search);
 
-    await runSoakLoop({
-      hoursToRun,
-      activeMs: ACTIVE_MS,
-      idle: idleFn(search),
-      action: async () => {
+    await runSoak(
+      hours,
+      () => waitForMinutes(search, IDLE_TIME_MINS),
+      async () => {
         await navigateToLastMessage(message, messageList);
         await navigateToFirstMessage(message, messageList);
-      },
-    });
-  };
-}
-
-function scenarios(): Record<string, SoakHandler> {
-  return {
-    OpenAndCloseSCM: scenarioOpenAndCloseSCM(),
-    SwitchBetweenMessagesInMessageList: scenarioSwitchBetweenMessagesInMessageList(),
-    SwitchBetweenAIMessageOptions: scenarioSwitchBetweenAIMessageOptions(),
-    SwitchMessageTopicLengthsAndGenerate: scenarioSwitchMessageTopicLengthsAndGenerate(),
-    NavigateMessages: scenarioNavigateMessages(),
-  };
-}
-
-function requireScenario(map: Record<string, SoakHandler>, scenario: string): SoakHandler {
-  const handler = map[scenario];
-  if (!handler) throw new Error(`Unknown soak scenario: ${scenario}`);
-  return handler;
-}
-
-function parseHours(raw: unknown): number {
-  const n = typeof raw === "number" ? raw : Number(raw);
-  if (!Number.isFinite(n) || n <= 0) throw new Error(`Invalid hours: ${raw}`);
-  return n;
-}
-
-const soakScenarios = scenarios();
+      }
+    );
+  },
+};
 
 Given(
-  /^I start the (.+) soak test for (.+) hrs$/,
-  async (ctx: SoakContext, scenarioRaw: string, hoursRaw: unknown) => {
+  /^I start the (.+) soak test for (\d+(?:\.\d+)?) hrs$/,
+  async (ctx: SoakContext, scenario: string, hoursRaw: string) => {
     startSnapshots();
     try {
-      const scenario = String(scenarioRaw).trim();
-      const hoursToRun = parseHours(hoursRaw);
-      await requireScenario(soakScenarios, scenario)(ctx, hoursToRun);
+      const hours = Number(hoursRaw);
+      const handler = scenarios[scenario];
+
+      if (!handler) {
+        throw new Error(`Unknown soak scenario: ${scenario}`);
+      }
+
+      await handler(ctx, hours);
     } finally {
       stopSnapshots();
     }
